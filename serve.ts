@@ -69,4 +69,5 @@ createServer((request, response) => {
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
   console.log(`game/ is on http://localhost:${port}`);
+  console.log(`[SOLMAR BAY] Server running on port ${port} at ${new Date().toISOString()}`);
 });

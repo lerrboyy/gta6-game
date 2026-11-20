@@ -17,6 +17,13 @@ export class WorldManager {
     this.health = 100;
     this.cash = 500;
     this.wanted = 0;
+    // Essential player statistics and equipment representing core GTA progression formulas
+    this.armor = 0;
+    this.respect = 0;
+    this.day = 1;
+    this.clockMinutes = 9 * 60 + 31;
+    this.weaponSlot = 1;
+    this.ownedWeapons = [0, 1];
     this.isGrounded = false;
     this.isDriving = false;
     this.walkPhase = 0;
@@ -146,7 +153,64 @@ export class WorldManager {
     }
   }
 
+  switchWeapon(slot) {
+    if (CONFIG.WEAPONS[slot] && this.ownedWeapons.includes(slot)) {
+      this.weaponSlot = slot;
+      return true;
+    }
+    return false;
+  }
+
+  buyWeapon(slot) {
+    const weapon = CONFIG.WEAPONS[slot];
+    if (!weapon) return false;
+    if (this.ownedWeapons.includes(slot)) return false;
+    if (this.cash < weapon.price) return false;
+    this.cash -= weapon.price;
+    this.ownedWeapons.push(slot);
+    this.weaponSlot = slot;
+    return true;
+  }
+
+  currentWeapon() {
+    return CONFIG.WEAPONS[this.weaponSlot];
+  }
+
+  takeDamage(amount) {
+    const half = Math.floor(amount / 2);
+    const absorbed = Math.min(this.armor, half);
+    this.armor -= absorbed;
+    const healthDamage = amount - absorbed;
+    this.health = Math.max(0, this.health - healthDamage);
+    return this.health;
+  }
+
+  addRespect(points) {
+    this.respect += points;
+    let currentLevelName = CONFIG.RESPECT_LEVELS[0].name;
+    for (const level of CONFIG.RESPECT_LEVELS) {
+      if (this.respect >= level.threshold) {
+        currentLevelName = level.name;
+      }
+    }
+    return currentLevelName;
+  }
+
+  clockText() {
+    const hours = Math.floor(this.clockMinutes / 60);
+    const minutes = Math.floor(this.clockMinutes % 60);
+    const hh = String(hours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+    return `DAY ${this.day} ${hh}:${mm}`;
+  }
+
   update(dt, input, audio) {
+    this.clockMinutes += dt * (24 * 60 / (CONFIG.CLOCK.dayLengthMin * 60));
+    if (this.clockMinutes >= 24 * 60) {
+      this.clockMinutes -= 24 * 60;
+      this.day += 1;
+    }
+
     // Always update traffic, pedestrians & police
     this.vehicles.update(dt, input, this);
     this.pedestrians.update(dt, this);
@@ -272,8 +336,8 @@ export class WorldManager {
     let rot = this.rotation;
 
     if (this.isDriving && this.vehicles.drivenCar) {
-      distance = 9;
-      height = 3.5;
+      distance = 10.5;
+      height = 3.0;
       rot = this.vehicles.drivenCar.rotation;
     }
 

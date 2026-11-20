@@ -5,6 +5,7 @@ export class PedestrianManager {
     this.scene = scene;
     this.city = city;
     this.pedestrians = [];
+    this.crew = [];
     this.shirtColors = [0xff3b30, 0x0077be, 0x4cd964, 0xffcc00, 0xff9500, 0x8e8e93, 0xffffff, 0x9c27b0, 0xe91e63];
   }
 
@@ -48,6 +49,33 @@ export class PedestrianManager {
         timer: Math.random() * 5
       });
     }
+
+    this.spawnCrew();
+  }
+
+  spawnCrew() {
+    this.crew = [];
+    const crewData = [
+      { name: 'Lena', color: 0xff6b9d, pos: new THREE.Vector3(-38, 0, 48) },
+      { name: 'Marco', color: 0xff9500, pos: new THREE.Vector3(-42, 0, 52) }
+    ];
+
+    for (const c of crewData) {
+      const mesh = this.createPedestrianMesh();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: c.color, roughness: 0.6 });
+      if (mesh.children[0]) {
+        mesh.children[0].material = bodyMat;
+      }
+      mesh.position.copy(c.pos);
+      this.scene.add(mesh);
+
+      this.crew.push({
+        name: c.name,
+        mesh: mesh,
+        position: mesh.position,
+        angle: Math.random() * Math.PI * 2
+      });
+    }
   }
 
   update(dt, playerPosition) {
@@ -78,6 +106,13 @@ export class PedestrianManager {
 
       ped.mesh.position.copy(ped.position);
       ped.mesh.rotation.y = ped.angle;
+    }
+
+    if (this.crew) {
+      for (const member of this.crew) {
+        member.angle += dt * 0.2; // slow idle turn
+        member.mesh.rotation.y = member.angle;
+      }
     }
   }
 }

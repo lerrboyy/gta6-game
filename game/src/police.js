@@ -1,4 +1,5 @@
 import * as THREE from './three.js';
+import { CONFIG } from './config.js';
 
 export class PoliceManager {
   constructor(scene, city) {
@@ -7,6 +8,10 @@ export class PoliceManager {
     this.policeCars = [];
     this.outOfSightTimer = 0;
     this.bustedTimer = 0;
+    this.heli = null;
+    this.roadblock = [];
+    this.unitNames = ['PIER 5', 'TIDE 6', 'TIDE 37', 'AIR ONE', 'TAC-45', 'K-9 12'];
+    // Support structures for police dispatch tracking, aerial helicopter units, and tactical roadblocks
     this.bustedOverlayEl = null;
     
     this.initBustedOverlay();
@@ -74,6 +79,68 @@ export class PoliceManager {
     return carGroup;
   }
 
+  createHeliMesh() {
+    const heliGroup = new THREE.Group();
+
+    // Dark body box (2.2 x 0.8 x 4)
+    const bodyGeo = new THREE.BoxGeometry(2.2, 0.8, 4);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.6 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.4;
+    body.castShadow = true;
+    heliGroup.add(body);
+
+    // Tail box (0.5 x 0.5 x 3) behind it
+    const tailGeo = new THREE.BoxGeometry(0.5, 0.5, 3);
+    const tailMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.6 });
+    const tail = new THREE.Mesh(tailGeo, tailMat);
+    tail.position.set(0, 0.5, -3.5);
+    heliGroup.add(tail);
+
+    // Main rotor (thin box 7 x 0.08 x 0.5) on top stored as this.heliRotor
+    const rotorGeo = new THREE.BoxGeometry(7, 0.08, 0.5);
+    const rotorMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 });
+    const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+    rotor.position.set(0, 0.85, 0);
+    heliGroup.add(rotor);
+    this.heliRotor = rotor;
+
+    // White spotlight cone under it (cone mesh pointing down, semi-transparent)
+    const coneGeo = new THREE.ConeGeometry(4, 12, 16);
+    coneGeo.translate(0, -6, 0);
+    const coneMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
+    const cone = new THREE.Mesh(coneGeo, coneMat);
+    heliGroup.add(cone);
+
+    return heliGroup;
+  }
+
+  getDispatch(world) {
+    const list = [];
+    for (let i = 0; i < this.policeCars.length; i++) {
+      const pCar = this.policeCars[i];
+      const rawDist = pCar.position.distanceTo(world.position);
+      const dist = Math.round(rawDist) + 'M';
+      const tactic = rawDist < 15 ? 'RAMMING' : 'PURSUIT';
+      list.push({
+        name: this.unitNames[i % this.unitNames.length],
+        dist: dist,
+        tactic: tactic
+      });
+    }
+    if (this.heli) {
+      list.push({ name: 'AIR ONE', dist: '55M', tactic: 'SPOTLIGHT' });
+    }
+    if (this.roadblock.length > 0) {
+      list.push({ name: 'TAC-45', dist: '120M', tactic: 'ROADBLOCK' });
+    }
+    return list.slice(0, 5);
+  }
+
+  getWantedName(world) {
+    return CONFIG.WANTED_NAMES[Math.min(5, Math.max(0, world.wanted))];
+  }
+
   update(dt, world) {
     const targetWanted = Math.min(5, Math.max(0, world.wanted));
     
@@ -124,6 +191,56 @@ export class PoliceManager {
           return;
         }
       }
+    }
+
+    // Helicopter support (wanted >= 3)
+    if (targetWanted >= 3 && !this.heli) {
+      this.heli = this.createHeliMesh();
+      this.heli.position.copy(world.position).add(new THREE.Vector3(0, 25, 0));
+      this.scene.add(this.heli);
+    } else if (targetWanted < 3 && this.heli) {
+      this.scene.remove(this.heli);
+      this.heli = null;
+      this.heliRotor = null;
+    }
+    if (this.heli) {
+      this.heli.position.copy(world.position).add(new THREE.Vector3(0, 25, 0));
+      if (this.heliRotor) {
+        this.heliRotor.rotation.y += dt * 20;
+      }
+    }
+
+    // Roadblock support (wanted >= 4)
+    if (targetWanted >= 4 && this.roadblock.length === 0) {
+      const isDriving = world.isDriving && world.vehicles.drivenCar;
+      const dir = isDriving
+        ? new THREE.Vector3(Math.sin(world.vehicles.drivenCar.rotation), 0, Math.cos(world.vehicles.drivenCar.rotation))
+        : new THREE.Vector3(-Math.sin(world.rotation), 0, -Math.cos(world.rotation));
+      const aheadDist = isDriving ? 40 : 30;
+      const basePos = isDriving ? world.vehicles.drivenCar.position : world.position;
+      const ahead = basePos.clone().addScaledVector(dir, aheadDist);
+      const perp = new THREE.Vector3(-dir.z, 0, dir.x);
+
+      const posLeft = ahead.clone().addScaledVector(perp, 4);
+      const posRight = ahead.clone().addScaledVector(perp, -4);
+
+      const carLeft = this.createPoliceCarMesh();
+      carLeft.position.copy(posLeft);
+      const rot = Math.atan2(dir.x, dir.z);
+      carLeft.rotation.y = rot;
+      this.scene.add(carLeft);
+
+      const carRight = this.createPoliceCarMesh();
+      carRight.position.copy(posRight);
+      carRight.rotation.y = rot;
+      this.scene.add(carRight);
+
+      this.roadblock = [carLeft, carRight];
+    } else if (targetWanted < 4 && this.roadblock.length > 0) {
+      for (const rbCar of this.roadblock) {
+        if (rbCar) this.scene.remove(rbCar);
+      }
+      this.roadblock = [];
     }
 
     // Wanted decay: no police car within ~40 units for 10 seconds -> -1 star
@@ -182,6 +299,16 @@ export class PoliceManager {
       if (pCar && pCar.mesh) this.scene.remove(pCar.mesh);
     }
     this.policeCars = [];
+
+    if (this.heli) {
+      this.scene.remove(this.heli);
+      this.heli = null;
+      this.heliRotor = null;
+    }
+    for (const rbCar of this.roadblock) {
+      if (rbCar) this.scene.remove(rbCar);
+    }
+    this.roadblock = [];
 
     if (this.bustedOverlayEl) {
       this.bustedOverlayEl.classList.remove('hidden');
