@@ -1,3 +1,5 @@
+// Defines vehicle meshes complete with aerodynamic chassis components,
+// illuminated driving lights, custom hub assemblies, and diverse finishes.
 import * as THREE from './three.js';
 
 export class VehicleManager {
@@ -54,6 +56,16 @@ export class VehicleManager {
     shield.position.set(0, 1.2, 1.15);
     shield.rotation.x = 0.6;
     carGroup.add(shield);
+
+    const mirrorMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.2, metalness: 0.8 });
+    const mirrorL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.25), mirrorMat);
+    mirrorL.position.set(-0.86, 1.2, 0.6);
+    mirrorL.castShadow = true;
+    carGroup.add(mirrorL);
+    const mirrorR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.25), mirrorMat);
+    mirrorR.position.set(0.86, 1.2, 0.6);
+    mirrorR.castShadow = true;
+    carGroup.add(mirrorR);
 
     // Wheels
     const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 12);
