@@ -1,3 +1,7 @@
+// Solmar Bay v2 — visual overhaul (Nov 2026): humanoid player character with walk
+// animation, window-lit buildings with neon signs, detailed cars, marked roads with
+// sidewalks and crosswalks, and a Vice City sunset sky. Gameplay, missions, driving,
+// collisions and HUD are unchanged from v1; only the visuals were rebuilt.
 // A working gta6-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
 // modules, no library and no network request), and the program hands it in. It copies game/ and

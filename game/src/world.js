@@ -19,6 +19,7 @@ export class WorldManager {
     this.wanted = 0;
     this.isGrounded = false;
     this.isDriving = false;
+    this.walkPhase = 0;
 
     // Managers
     this.vehicles = new VehicleManager(scene, this.city);
@@ -27,22 +28,89 @@ export class WorldManager {
     this.pedestrians.spawn();
     this.police = new PoliceManager(scene, this.city);
 
-    // Create Player Mesh (Capsule / Character representation)
+    // Create Player Mesh (Low-poly humanoid)
     this.playerGroup = new THREE.Group();
+
+    // Legs
+    const legGeo = new THREE.BoxGeometry(0.22, 0.8, 0.28);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x1f2a44, roughness: 0.7 });
     
-    // Body / Torso
-    const bodyGeo = new THREE.CylinderGeometry(0.6, 0.6, 1.8, 8);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0077be, roughness: 0.5 });
+    this.legL = new THREE.Group();
+    this.legL.position.set(-0.18, 0.8, 0);
+    const legMeshL = new THREE.Mesh(legGeo, legMat);
+    legMeshL.position.y = -0.4;
+    legMeshL.castShadow = true;
+    this.legL.add(legMeshL);
+    this.playerGroup.add(this.legL);
+
+    this.legR = new THREE.Group();
+    this.legR.position.set(0.18, 0.8, 0);
+    const legMeshR = new THREE.Mesh(legGeo, legMat);
+    legMeshR.position.y = -0.4;
+    legMeshR.castShadow = true;
+    this.legR.add(legMeshR);
+    this.playerGroup.add(this.legR);
+
+    // Torso & Belt
+    const bodyGeo = new THREE.BoxGeometry(0.72, 0.75, 0.4);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0e7c7b, roughness: 0.6 });
     this.bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    this.bodyMesh.position.y = 0.9;
+    this.bodyMesh.position.y = 1.18;
+    this.bodyMesh.castShadow = true;
     this.playerGroup.add(this.bodyMesh);
 
-    // Head
-    const headGeo = new THREE.SphereGeometry(0.35, 8, 8);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0xf4a460, roughness: 0.6 });
+    const beltGeo = new THREE.BoxGeometry(0.74, 0.1, 0.42);
+    const beltMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    const beltMesh = new THREE.Mesh(beltGeo, beltMat);
+    beltMesh.position.y = 0.82;
+    beltMesh.castShadow = true;
+    this.playerGroup.add(beltMesh);
+
+    // Arms
+    const armGeo = new THREE.BoxGeometry(0.18, 0.65, 0.22);
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x0e7c7b, roughness: 0.6 });
+
+    this.armL = new THREE.Group();
+    this.armL.position.set(-0.46, 1.5, 0);
+    const armMeshL = new THREE.Mesh(armGeo, armMat);
+    armMeshL.position.y = -0.32;
+    armMeshL.castShadow = true;
+    this.armL.add(armMeshL);
+    this.playerGroup.add(this.armL);
+
+    this.armR = new THREE.Group();
+    this.armR.position.set(0.46, 1.5, 0);
+    const armMeshR = new THREE.Mesh(armGeo, armMat);
+    armMeshR.position.y = -0.32;
+    armMeshR.castShadow = true;
+    this.armR.add(armMeshR);
+    this.playerGroup.add(this.armR);
+
+    // Head, Hair, Cap
+    const headGeo = new THREE.SphereGeometry(0.3, 8, 8);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xe8b88a, roughness: 0.6 });
     const headMesh = new THREE.Mesh(headGeo, headMat);
-    headMesh.position.y = 1.9;
+    headMesh.position.y = 1.78;
+    headMesh.castShadow = true;
     this.playerGroup.add(headMesh);
+
+    const hairGeo = new THREE.SphereGeometry(0.31, 8, 8);
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x3b2314 });
+    const hairMesh = new THREE.Mesh(hairGeo, hairMat);
+    hairMesh.position.y = 1.86;
+    hairMesh.scale.set(1, 0.7, 1);
+    this.playerGroup.add(hairMesh);
+
+    const capGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.08, 8);
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const capMesh = new THREE.Mesh(capGeo, capMat);
+    capMesh.position.y = 1.95;
+    this.playerGroup.add(capMesh);
+
+    const brimGeo = new THREE.BoxGeometry(0.3, 0.03, 0.25);
+    const brimMesh = new THREE.Mesh(brimGeo, capMat);
+    brimMesh.position.set(0, 1.93, 0.3);
+    this.playerGroup.add(brimMesh);
 
     this.scene.add(this.playerGroup);
   }
@@ -172,6 +240,21 @@ export class WorldManager {
 
     // Update mesh position
     this.playerGroup.position.copy(this.position);
+
+    if (this.legL && this.legR && this.armL && this.armR) {
+      if (this.isGrounded && (moveDir.x !== 0 || moveDir.z !== 0)) {
+        this.walkPhase += dt * 10;
+        this.legL.rotation.x = Math.sin(this.walkPhase) * 0.5;
+        this.legR.rotation.x = -Math.sin(this.walkPhase) * 0.5;
+        this.armL.rotation.x = -Math.sin(this.walkPhase) * 0.4;
+        this.armR.rotation.x = Math.sin(this.walkPhase) * 0.4;
+      } else {
+        this.legL.rotation.x *= 0.8;
+        this.legR.rotation.x *= 0.8;
+        this.armL.rotation.x *= 0.8;
+        this.armR.rotation.x *= 0.8;
+      }
+    }
 
     // Footstep audio if moving & grounded
     if (this.isGrounded && (moveDir.x !== 0 || moveDir.z !== 0) && Math.random() < 0.15) {

@@ -7,7 +7,7 @@ export class VehicleManager {
     this.vehicles = []; // Both AI traffic and parked/drivable cars
     this.drivenCar = null;
     
-    this.carColors = [0xff3b30, 0x0077be, 0x4cd964, 0xffcc00, 0xff9500, 0x8e8e93, 0xffffff, 0x111111];
+    this.carColors = [0xff3b30, 0x0077be, 0x4cd964, 0xffcc00, 0xff9500, 0x8e8e93, 0xffffff, 0x111111, 0x00b8a9, 0x9b59b6, 0xff6b9d];
   }
 
   createCarMesh(color) {
@@ -15,12 +15,31 @@ export class VehicleManager {
 
     // Body
     const bodyGeo = new THREE.BoxGeometry(2.0, 0.7, 4.2);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.4, metalness: 0.3 });
+    const bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.35, metalness: 0.4 });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.position.y = 0.6;
     body.castShadow = true;
     body.receiveShadow = true;
     carGroup.add(body);
+
+    // Hood (lower front deck) and trunk (lower rear deck)
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 1.0), bodyMat);
+    hood.position.set(0, 0.8, 1.5);
+    hood.castShadow = true;
+    carGroup.add(hood);
+    const trunk = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 0.8), bodyMat);
+    trunk.position.set(0, 0.8, -1.6);
+    trunk.castShadow = true;
+    carGroup.add(trunk);
+
+    // Bumpers
+    const bumperMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.8 });
+    const bumperF = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.25, 0.3), bumperMat);
+    bumperF.position.set(0, 0.35, 2.12);
+    carGroup.add(bumperF);
+    const bumperR = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.25, 0.3), bumperMat);
+    bumperR.position.set(0, 0.35, -2.12);
+    carGroup.add(bumperR);
 
     // Cabin
     const cabinGeo = new THREE.BoxGeometry(1.6, 0.6, 2.2);
@@ -29,6 +48,12 @@ export class VehicleManager {
     cabin.position.set(0, 1.15, -0.2);
     cabin.castShadow = true;
     carGroup.add(cabin);
+
+    // Sloped windshield (dark glass)
+    const shield = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 1.1), new THREE.MeshStandardMaterial({ color: 0x0a1a2a, roughness: 0.1, metalness: 0.9 }));
+    shield.position.set(0, 1.2, 1.15);
+    shield.rotation.x = 0.6;
+    carGroup.add(shield);
 
     // Wheels
     const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 12);
@@ -46,6 +71,26 @@ export class VehicleManager {
       const wheel = new THREE.Mesh(wheelGeo, wheelMat);
       wheel.position.set(...pos);
       carGroup.add(wheel);
+    }
+
+    const headMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+    const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
+    for (const sx of [-0.65, 0.65]) {
+      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.15, 0.08), headMat);
+      hl.position.set(sx, 0.65, 2.12);
+      carGroup.add(hl);
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.15, 0.08), tailMat);
+      tl.position.set(sx, 0.65, -2.12);
+      carGroup.add(tl);
+    }
+
+    const hubGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.34, 12);
+    hubGeo.rotateZ(Math.PI / 2);
+    const hubMat = new THREE.MeshStandardMaterial({ color: 0xbbbbbb, roughness: 0.3, metalness: 0.7 });
+    for (const pos of wheelPositions) {
+      const hub = new THREE.Mesh(hubGeo, hubMat);
+      hub.position.set(...pos);
+      carGroup.add(hub);
     }
 
     return carGroup;
