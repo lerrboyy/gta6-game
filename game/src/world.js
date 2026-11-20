@@ -1,6 +1,10 @@
 import * as THREE from './three.js';
 import { CONFIG } from './config.js';
 import { VehicleManager } from './vehicles.js';
+
+// v3: the world state Rico carries with him — armor, respect, the day and clock,
+// the weapon he has drawn and the ones he owns.
+
 import { PedestrianManager } from './pedestrians.js';
 import { PoliceManager } from './police.js';
 

@@ -30,6 +30,33 @@
   #cash-display { font-size: 24px; color: #4cd964; font-weight: bold; text-shadow: 2px 2px 0 #000; }
   #speed-display { font-size: 22px; color: var(--gold); font-weight: bold; text-shadow: 2px 2px 0 #000; margin-top: 5px; }
   #wanted-stars { font-size: 24px; color: var(--gold); text-shadow: 2px 2px 0 #000; }
+
+  /* Weapon selection slots at bottom centre */
+  #weapon-slots { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; }
+  .wslot { width: 44px; height: 44px; background: var(--glass); border: 2px solid var(--gold); color: white; font-weight: bold; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 10px; line-height: 1.1; }
+  .wslot.active { background: var(--gold); color: black; }
+  .wslot.locked { opacity: 0.5; border-color: #888; }
+  
+  /* Radio and Clock displays (top-right) */
+  #radio-display { color: var(--gold); font-family: monospace; font-size: 14px; margin-top: 5px; }
+  #clock-display { color: white; font-family: monospace; font-weight: bold; font-size: 18px; margin-top: 2px; }
+  
+  /* Stat bars for Respect and Armor */
+  #respect-bar { margin-top: 10px; }
+  #respect-fill { height: 100%; background: #a333c8; width: 0%; transition: width 0.3s; }
+  #respect-label { font-size: 12px; color: var(--gold); font-weight: bold; margin-top: 2px; }
+  
+  #armor-bar { margin-bottom: 5px; }
+  #armor-fill { height: 100%; background: #2185d0; width: 0%; transition: width 0.3s; }
+  
+  /* Dispatch panel on the right side */
+  #dispatch-panel { position: fixed; right: 0; top: 50%; transform: translateY(-50%); background: var(--glass); border-left: 4px solid var(--gold); padding: 15px; width: 220px; font-family: monospace; font-size: 12px; color: white; z-index: 5; pointer-events: none; }
+  
+  /* Garage Menu Overlay Panel */
+  .gbtn { background: var(--gold); color: black; border: none; padding: 10px 20px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 5px; transition: transform 0.2s; margin: 8px 0; display: block; width: 100%; }
+  .gbtn:hover { transform: scale(1.02); }
+  .gbtn:active { transform: scale(0.98); }
+  .gbtn.secondary { background: #eee; }
   
   .menu-box { background: rgba(0,0,0,0.8); padding: 40px; border: 4px solid var(--gold); border-radius: 10px; max-width: 600px; text-align: center; }
   h1 { font-size: 64px; margin: 0 0 10px 0; letter-spacing: 5px; color: var(--gold); text-shadow: 4px 4px 0 #000; }
@@ -51,20 +78,36 @@
   <div class="hud-top">
     <div class="stats">
       <div class="stat-bar"><div id="health-fill"></div></div>
+      <div class="stat-bar" id="armor-bar"><div id="armor-fill"></div></div>
       <div id="cash-display">$0</div>
+      <div class="stat-bar" id="respect-bar"><div id="respect-fill"></div></div>
+      <div id="respect-label">NEW IN TOWN</div>
       <div id="speed-display" class="hidden">0 MPH</div>
     </div>
-    <div id="wanted-stars"></div>
+    <div style="text-align: right;">
+      <div id="wanted-stars"></div>
+      <div id="radio-display">SOLMAR FM 98.6</div>
+      <div id="clock-display">DAY 1 09:31</div>
+    </div>
   </div>
   <div class="hud-bottom">
     <div id="minimap-container">
       <canvas id="minimap"></canvas>
     </div>
+    <div id="weapon-slots">
+      <div class="wslot" id="wslot-0">1 FISTS</div>
+      <div class="wslot" id="wslot-1">2 .38</div>
+      <div class="wslot locked" id="wslot-2">3 SMG</div>
+      <div class="wslot locked" id="wslot-3">4 12G</div>
+      <div class="wslot locked" id="wslot-4">5 AR-9</div>
+    </div>
     <div class="controls-hint">
-      <kbd>WASD</kbd> Move | <kbd>E</kbd> Enter/Exit Car | <kbd>SHIFT</kbd> Sprint | <kbd>SPACE</kbd> Jump | <kbd>ESC</kbd> Pause | <kbd>M</kbd> Mute
+      <kbd>WASD</kbd> Move | <kbd>E</kbd> Enter/Exit Car | <kbd>1-5</kbd> Weapons | <kbd>F</kbd> Shoot | <kbd>R</kbd> Radio | <kbd>N</kbd> Nitro | <kbd>G</kbd> Garage | <kbd>SHIFT</kbd> Sprint | <kbd>SPACE</kbd> Jump | <kbd>ESC</kbd> Pause | <kbd>M</kbd> Mute
     </div>
   </div>
 </div>
+
+<div id="dispatch-panel" class="hidden"></div>
 
 <div id="start-screen" class="overlay">
   <div class="menu-box">
@@ -89,6 +132,20 @@
     <button id="resume-btn" class="btn">RESUME</button>
     <button id="save-btn" class="btn secondary">SAVE GAME</button>
     <p class="controls-hint"><kbd>M</kbd> Toggle Mute</p>
+  </div>
+</div>
+
+<div id="garage-menu" class="overlay hidden">
+  <div class="menu-box">
+    <h1>SOLMAR CUSTOMS</h1>
+    <p class="intro">Tune your ride, Rico.</p>
+    <button class="gbtn" id="g-repair">Full Repair $250</button>
+    <button class="gbtn" id="g-respray">Respray $400</button>
+    <button class="gbtn" id="g-engine">Engine Tune $4000</button>
+    <button class="gbtn" id="g-armour">Armour Plating $3000</button>
+    <button class="gbtn" id="g-nitro">Nitro Kit $1800</button>
+    <button class="gbtn secondary" id="g-close">LEAVE</button>
+    <p class="controls-hint">Press G to close</p>
   </div>
 </div>
 

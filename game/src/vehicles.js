@@ -1,6 +1,7 @@
 // Defines vehicle meshes complete with aerodynamic chassis components,
 // illuminated driving lights, custom hub assemblies, and diverse finishes.
 import * as THREE from './three.js';
+import { CONFIG } from './config.js';
 
 export class VehicleManager {
   constructor(scene, city) {
@@ -8,8 +9,25 @@ export class VehicleManager {
     this.city = city;
     this.vehicles = []; // Both AI traffic and parked/drivable cars
     this.drivenCar = null;
+    // Garage world position at (60,0,60) and timer tracking active nitro boost duration
+    this.garagePos = new THREE.Vector3(60, 0, 60);
+    this.nitroTimer = 0;
     
     this.carColors = [0xff3b30, 0x0077be, 0x4cd964, 0xffcc00, 0xff9500, 0x8e8e93, 0xffffff, 0x111111, 0x00b8a9, 0x9b59b6, 0xff6b9d];
+  }
+
+  // The closest car to a point, within maxDist, or null when the road is empty.
+  getNearestCar(position, maxDist) {
+    let best = null;
+    let bestDist = maxDist;
+    for (const car of this.vehicles) {
+      const d = car.position.distanceTo(position);
+      if (d < bestDist) {
+        bestDist = d;
+        best = car;
+      }
+    }
+    return best;
   }
 
   createCarMesh(color) {
@@ -18,6 +36,7 @@ export class VehicleManager {
     // Body
     const bodyGeo = new THREE.BoxGeometry(2.0, 0.7, 4.2);
     const bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.35, metalness: 0.4 });
+    carGroup.userData.bodyMat = bodyMat;
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.position.y = 0.6;
     body.castShadow = true;
@@ -108,6 +127,65 @@ export class VehicleManager {
     return carGroup;
   }
 
+  carMods(car) {
+    if (!car.mods) {
+      car.mods = { engine: 0, armour: 0, nitro: false, color: null };
+    }
+    return car.mods;
+  }
+
+  applyGarageUpgrade(kind, world) {
+    if (!this.drivenCar) return false;
+    let cost = 0;
+    const mods = this.carMods(this.drivenCar);
+
+    if (kind === 'repair') {
+      cost = CONFIG.GARAGE.repair;
+    } else if (kind === 'respray') {
+      cost = CONFIG.GARAGE.respray;
+    } else if (kind === 'engine') {
+      if (mods.engine >= CONFIG.GARAGE.maxLevel) return false;
+      cost = CONFIG.GARAGE.engine;
+    } else if (kind === 'armour') {
+      if (mods.armour >= CONFIG.GARAGE.maxLevel) return false;
+      cost = CONFIG.GARAGE.armour;
+    } else if (kind === 'nitro') {
+      if (mods.nitro) return false;
+      cost = CONFIG.GARAGE.nitro;
+    } else {
+      return false;
+    }
+
+    if (world.cash < cost) return false;
+
+    world.cash -= cost;
+
+    if (kind === 'respray') {
+      const newColor = this.carColors[Math.floor(Math.random() * this.carColors.length)];
+      if (this.drivenCar.mesh && this.drivenCar.mesh.userData && this.drivenCar.mesh.userData.bodyMat) {
+        this.drivenCar.mesh.userData.bodyMat.color.setHex(newColor);
+      }
+      mods.color = newColor;
+    } else if (kind === 'engine') {
+      mods.engine += 1;
+    } else if (kind === 'armour') {
+      mods.armour += 1;
+    } else if (kind === 'nitro') {
+      mods.nitro = true;
+    }
+
+    return true;
+  }
+
+  isAtGarage() {
+    if (!this.drivenCar) return false;
+    return this.drivenCar.position.distanceTo(this.garagePos) <= 12;
+  }
+
+  carTopSpeed(car) {
+    return car.maxSpeed + (car.mods ? car.mods.engine * CONFIG.GARAGE.engineMaxSpeedBonus : 0);
+  }
+
   spawnParkedCars() {
     // 4-6 parked cars near player start (around x=15, z=25)
     const parkedCoords = [
@@ -188,6 +266,14 @@ export class VehicleManager {
         let throttle = 0;
         let steering = 0;
 
+        if (input.isPressed('KeyN') && this.drivenCar.mods && this.drivenCar.mods.nitro && this.nitroTimer <= 0) {
+          this.nitroTimer = 3;
+        }
+        if (this.nitroTimer > 0) {
+          this.nitroTimer -= dt;
+          car.speed = Math.min(this.carTopSpeed(car) + 15, car.speed + 30 * dt);
+        }
+
         if (input.isPressed('KeyW') || input.isPressed('ArrowUp')) throttle = 1;
         if (input.isPressed('KeyS') || input.isPressed('ArrowDown')) throttle = -1;
         if (input.isPressed('KeyA') || input.isPressed('ArrowLeft')) steering = 1;
@@ -195,7 +281,7 @@ export class VehicleManager {
 
         if (throttle !== 0) {
           car.speed += throttle * 15 * dt;
-          car.speed = Math.max(-10, Math.min(car.maxSpeed, car.speed));
+          car.speed = Math.max(-10, Math.min(this.carTopSpeed(car), car.speed));
         } else {
           // Natural deceleration / drag
           car.speed *= 0.95;

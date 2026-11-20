@@ -1,4 +1,6 @@
 // Seeded PRNG for reproducible procedural generation
+// v3: the same seed always builds the same Solmar Bay, so every screenshot
+// and every play session sees the same streets.
 export class SeededRandom {
   constructor(seed = 12345) {
     this.seed = seed;

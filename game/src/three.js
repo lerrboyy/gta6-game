@@ -53,6 +53,7 @@ export const KeyframeTrack = T.KeyframeTrack;
 export const VectorKeyframeTrack = T.VectorKeyframeTrack;
 export const QuaternionKeyframeTrack = T.QuaternionKeyframeTrack;
 export const CircleGeometry = T.CircleGeometry;
+export const RingGeometry = T.RingGeometry;
 export const CanvasTexture = T.CanvasTexture;
 export const InstancedMesh = T.InstancedMesh;
 export const DynamicDrawUsage = T.DynamicDrawUsage;

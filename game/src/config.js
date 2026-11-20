@@ -1,4 +1,6 @@
 // Game Configuration and Constants
+// v3: weapon slots, garage prices, radio stations, respect ranks and wanted names
+// all live here so the HUD, the garage and the police dispatch read one source.
 export const CONFIG = {
   WORLD_SIZE: 300,
   BLOCK_SIZE: 40,

@@ -1,5 +1,8 @@
 import * as THREE from './three.js';
 
+// v3 story: eight jobs for Rico, Lena and Marco, each with staged objectives and
+// crew dialogue — the mission chain that carries the game from the first delivery
+// to the final getaway.
 const JOBS = [
   { num: 1, name: "FIRST DELIVERY", stages: 1, reward: 200, intro: ["LENA", "Rico, get that package across town before the timer runs out."] },
   { num: 2, name: "PACKAGE RUN", stages: 5, reward: 300, intro: ["MARCO", "We need those drops secured across the district, speed is key."] },

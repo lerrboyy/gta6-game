@@ -7,6 +7,8 @@ export class InputManager {
     this.onInteract = onInteract;
     
     this.keys = {};
+    // Keys tapped since the last frame, so one physical press fires exactly once.
+    this._justPressed = {};
     this.mouseMoveX = 0;
     this.mouseMoveY = 0;
     this.isPointerLocked = false;
@@ -19,6 +21,7 @@ export class InputManager {
 
   initListeners() {
     window.addEventListener('keydown', (e) => {
+      if (!e.repeat) this._justPressed[e.code] = true;
       this.keys[e.code] = true;
       if (e.code === 'KeyM' && this.onMuteToggle) {
         this.onMuteToggle();
@@ -78,5 +81,19 @@ export class InputManager {
 
   isPressed(code) {
     return !!this.keys[code];
+  }
+
+  // True exactly once per physical key press, then the press is spent.
+  consumeKey(code) {
+    if (this._justPressed[code]) {
+      this._justPressed[code] = false;
+      return true;
+    }
+    return false;
+  }
+
+  // Called once per frame by the game loop so an unconsumed press never lingers.
+  endFrame() {
+    this._justPressed = {};
   }
 }

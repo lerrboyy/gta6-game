@@ -99,6 +99,7 @@ export class CityGenerator {
 
     const buildingColors = [0xe0e0e0, 0xd2b48c, 0xffe4e1, 0xadd8e6, 0xfffacd, 0xf5deb3, 0xffb6c1, 0xfaebd7];
     this.buildRoads();
+    this.addGarageAndMalecon();
 
     for (let x = -halfWorld + 60; x < halfWorld - 60; x += step) {
       for (let z = -halfWorld + 60; z < halfWorld - 60; z += step) {
@@ -284,6 +285,84 @@ export class CityGenerator {
       frond.rotation.y = angle;
       this.scene.add(frond);
     }
+  }
+
+  addGarageAndMalecon() {
+    // (a) Garage "SOLMAR CUSTOMS" at (60, 0, 60)
+    this.garagePos = new THREE.Vector3(60, 0, 60);
+    const garageGeo = new THREE.BoxGeometry(24, 8, 14);
+    const garageMat = new THREE.MeshStandardMaterial({ color: 0x0e7c7b });
+    const garage = new THREE.Mesh(garageGeo, garageMat);
+    garage.position.set(60, 4, 60);
+    this.scene.add(garage);
+    // Add to colliders so player cannot walk through
+    this.colliders.push(new THREE.Box3().setFromObject(garage));
+
+    // Big dark doorway on the south face
+    const doorGeo = new THREE.BoxGeometry(10, 5, 0.5);
+    const doorMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+    const doorway = new THREE.Mesh(doorGeo, doorMat);
+    doorway.position.set(60, 2.5, 67.05);
+    this.scene.add(doorway);
+
+    // Glowing neon pink sign above the doorway
+    const signGeo = new THREE.BoxGeometry(12, 2, 0.5);
+    const signMat = new THREE.MeshBasicMaterial({ color: 0xff2d95 });
+    const sign = new THREE.Mesh(signGeo, signMat);
+    sign.position.set(60, 6.5, 67.05);
+    this.scene.add(sign);
+
+    // Thin neon ring mounted on the roof front
+    const ringGeo = new THREE.TorusGeometry(3, 0.15, 16, 100);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd700 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(60, 11, 67);
+    this.scene.add(ring);
+
+    // (b) Coastal Malecón road along the beach
+    const maleconGeo = new THREE.BoxGeometry(14, 0.06, 480);
+    const maleconMat = new THREE.MeshStandardMaterial({ color: 0x404040 });
+    const malecon = new THREE.Mesh(maleconGeo, maleconMat);
+    malecon.position.set(-218, 0.03, 0);
+    this.scene.add(malecon);
+
+    // Dashed center line along x = -218
+    const dashGeo = new THREE.BoxGeometry(0.35, 0.02, 2.5);
+    const dashMat = new THREE.MeshBasicMaterial({ color: 0xd8c56a });
+    const dashes = new THREE.InstancedMesh(dashGeo, dashMat, 60);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < 60; i++) {
+      dummy.position.set(-218, 0.05, -236 + i * 8);
+      dummy.updateMatrix();
+      dashes.setMatrixAt(i, dummy.matrix);
+    }
+    this.scene.add(dashes);
+
+    // Row of palm trees along the east edge
+    for (let z = -220; z <= 220; z += 24) {
+      this.createPalmTree(-208, z);
+    }
+
+    // (c) Safehouse: small pink house at (-40, 0, 50)
+    const houseGeo = new THREE.BoxGeometry(10, 6, 10);
+    const houseMat = new THREE.MeshStandardMaterial({ color: 0xffb6c1 });
+    const house = new THREE.Mesh(houseGeo, houseMat);
+    house.position.set(-40, 3, 50);
+    this.scene.add(house);
+
+    // Dark door for the safehouse
+    const houseDoorGeo = new THREE.BoxGeometry(2, 4, 0.2);
+    const houseDoorMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+    const houseDoor = new THREE.Mesh(houseDoorGeo, houseDoorMat);
+    houseDoor.position.set(-40, 2, 55.1);
+    this.scene.add(houseDoor);
+
+    // Magenta beacon cylinder on the roof
+    const beaconGeo = new THREE.CylinderGeometry(2, 2, 8, 16);
+    const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff00ff });
+    const beacon = new THREE.Mesh(beaconGeo, beaconMat);
+    beacon.position.set(-40, 10, 50);
+    this.scene.add(beacon);
   }
 
   checkCollision(position, radius = 1) {

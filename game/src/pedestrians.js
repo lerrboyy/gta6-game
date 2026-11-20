@@ -1,5 +1,7 @@
 import * as THREE from './three.js';
 
+// v3: the crew NPCs who hang around the safehouse and the mission markers —
+// Lena and Marco, the faces behind the job dialogue.
 export class PedestrianManager {
   constructor(scene, city) {
     this.scene = scene;

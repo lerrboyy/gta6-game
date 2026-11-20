@@ -1,6 +1,8 @@
 import * as THREE from './three.js';
 import { CONFIG } from './config.js';
 
+// v3: the wanted system — patrol cars, the helicopter and roadblocks, plus the
+// dispatch list the HUD shows while Rico is hot.
 export class PoliceManager {
   constructor(scene, city) {
     this.scene = scene;
