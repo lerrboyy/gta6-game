@@ -131,7 +131,6 @@ export class CityGenerator {
         }
       }
     }
-
     if (this._windowMesh) { this._windowMesh.count = this._windowCount; this._windowMesh.instanceMatrix.needsUpdate = true; if (this._windowMesh.instanceColor) this._windowMesh.instanceColor.needsUpdate = true; }
   }
 

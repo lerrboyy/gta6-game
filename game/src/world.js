@@ -28,13 +28,13 @@ export class WorldManager {
     this.pedestrians.spawn();
     this.police = new PoliceManager(scene, this.city);
 
-    // Create Player Mesh (Low-poly humanoid)
+    // Create Player Mesh (Humanoid representation)
     this.playerGroup = new THREE.Group();
 
     // Legs
     const legGeo = new THREE.BoxGeometry(0.22, 0.8, 0.28);
     const legMat = new THREE.MeshStandardMaterial({ color: 0x1f2a44, roughness: 0.7 });
-    
+
     this.legL = new THREE.Group();
     this.legL.position.set(-0.18, 0.8, 0);
     const legMeshL = new THREE.Mesh(legGeo, legMat);
@@ -51,7 +51,7 @@ export class WorldManager {
     this.legR.add(legMeshR);
     this.playerGroup.add(this.legR);
 
-    // Torso & Belt
+    // Torso (Jacket)
     const bodyGeo = new THREE.BoxGeometry(0.72, 0.75, 0.4);
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0e7c7b, roughness: 0.6 });
     this.bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
@@ -59,8 +59,9 @@ export class WorldManager {
     this.bodyMesh.castShadow = true;
     this.playerGroup.add(this.bodyMesh);
 
+    // Belt
     const beltGeo = new THREE.BoxGeometry(0.74, 0.1, 0.42);
-    const beltMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    const beltMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
     const beltMesh = new THREE.Mesh(beltGeo, beltMat);
     beltMesh.position.y = 0.82;
     beltMesh.castShadow = true;
@@ -86,7 +87,7 @@ export class WorldManager {
     this.armR.add(armMeshR);
     this.playerGroup.add(this.armR);
 
-    // Head, Hair, Cap
+    // Head
     const headGeo = new THREE.SphereGeometry(0.3, 8, 8);
     const headMat = new THREE.MeshStandardMaterial({ color: 0xe8b88a, roughness: 0.6 });
     const headMesh = new THREE.Mesh(headGeo, headMat);
@@ -94,19 +95,22 @@ export class WorldManager {
     headMesh.castShadow = true;
     this.playerGroup.add(headMesh);
 
+    // Hair
     const hairGeo = new THREE.SphereGeometry(0.31, 8, 8);
-    const hairMat = new THREE.MeshStandardMaterial({ color: 0x3b2314 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x3b2314, roughness: 0.8 });
     const hairMesh = new THREE.Mesh(hairGeo, hairMat);
     hairMesh.position.y = 1.86;
     hairMesh.scale.set(1, 0.7, 1);
     this.playerGroup.add(hairMesh);
 
+    // Cap
     const capGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.08, 8);
-    const capMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7 });
     const capMesh = new THREE.Mesh(capGeo, capMat);
     capMesh.position.y = 1.95;
     this.playerGroup.add(capMesh);
 
+    // Cap Brim
     const brimGeo = new THREE.BoxGeometry(0.3, 0.03, 0.25);
     const brimMesh = new THREE.Mesh(brimGeo, capMat);
     brimMesh.position.set(0, 1.93, 0.3);
