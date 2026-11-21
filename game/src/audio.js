@@ -1,259 +1,456 @@
-// Solmar Bay sound engine — every sound is synthesized live with Web Audio,
-// so the game ships no audio files. UI blips, footsteps, the two-station
-// radio, one shot per weapon, the coastal ambient hum and the two-tone
-// police siren are all built here from oscillators and filtered noise.
-import { CONFIG } from './config.js';
+// audio.js — all sound for Solmar Bay, synthesized live with WebAudio.
+// No audio files anywhere: every effect and every radio note is built from
+// oscillators and filtered noise. The engine is created by a factory and
+// stays silent until the player unlocks it with a gesture (the title
+// screen button), because browsers refuse audio before user interaction.
+//
+// The loop module calls update() once per frame with the car's speed and
+// whether a siren should be sounding; everything else is event driven.
 
-// The little bass riff the radio loops, one note per beat.
-const RADIO_RIFF = [110, 130.8, 164.8, 196, 164.8, 130.8, 110, 98];
-const RADIO_BEAT_MS = 250;
-const RADIO_NOTE_SECONDS = 0.22;
-const RADIO_NOTE_GAIN = 0.05;
+const MPH_PER_MS = 2.23694;
 
-// Two-tone siren: low note, high note, and how long each one lasts.
-const SIREN_LOW_HZ = 700;
-const SIREN_HIGH_HZ = 950;
-const SIREN_STEP_MS = 400;
-const SIREN_GAIN = 0.04;
+// ---------------------------------------------------------------------------
+// Radio stations. Each station is a small step sequencer: a tempo, a bass
+// line, a chord pad / lead line and a percussion tick, all expressed as
+// note tables so the loop can be scheduled ahead of the playhead.
+// Frequencies are plain equal-tempered values in hertz.
+// ---------------------------------------------------------------------------
 
-export class AudioManager {
-  constructor() {
-    this.muted = false;
-    this.ctx = null;
-    this.ambientNode = null;
-    this.initialized = false;
-    // Which station the dial sits on, the timer that schedules its notes,
-    // and the live nodes of the siren loop (null while the siren is quiet).
-    this.radioStation = 0;
-    this.radioTimer = null;
-    this.sirenNodes = null;
-  }
+const STATIONS = [
+  {
+    name: 'SOLMAR FM 98.6',
+    frequency: '98.6',
+    genre: 'Latin groove',
+    bpm: 96,
+    // A slow, warm Am - F - C - G stroll. Bass walks the roots, the lead
+    // picks out a relaxed montuno-style figure, the shaker ticks on the
+    // off-beats.
+    bassNotes: [110.0, 110.0, 87.31, 87.31, 130.81, 130.81, 98.0, 98.0],
+    leadNotes: [
+      440.0, 523.25, 659.25, 523.25, 349.23, 440.0, 523.25, 392.0,
+      440.0, 523.25, 659.25, 783.99, 659.25, 523.25, 440.0, 392.0,
+    ],
+    padChords: [
+      [220.0, 261.63, 329.63],
+      [174.61, 220.0, 261.63],
+      [261.63, 329.63, 392.0],
+      [196.0, 246.94, 293.66],
+    ],
+    songs: [
+      'Atardecer en el Malecón',
+      'Brisa de Medianoche',
+      'Ritmo del Barrio',
+    ],
+    leadWave: 'triangle',
+    bassWave: 'sine',
+  },
+  {
+    name: 'NEON WAVE 104.3',
+    frequency: '104.3',
+    genre: 'fast electronic beat',
+    bpm: 128,
+    // A driving minor-key synth line: fast eighth-note bass, a bright
+    // square arpeggio on top, four-on-the-floor kick feel from the tick.
+    bassNotes: [
+      55.0, 55.0, 65.41, 55.0, 55.0, 82.41, 55.0, 73.42,
+      55.0, 55.0, 65.41, 55.0, 98.0, 82.41, 73.42, 65.41,
+    ],
+    leadNotes: [
+      440.0, 554.37, 659.25, 880.0, 659.25, 554.37, 440.0, 329.63,
+      440.0, 554.37, 659.25, 880.0, 1108.7, 880.0, 659.25, 554.37,
+    ],
+    padChords: [
+      [110.0, 130.81, 164.81],
+      [98.0, 123.47, 146.83],
+      [87.31, 110.0, 130.81],
+      [98.0, 123.47, 146.83],
+    ],
+    songs: [
+      'Luces de Neón',
+      'Persecución Nocturna',
+      'Circuito Cerrado',
+    ],
+    leadWave: 'square',
+    bassWave: 'sawtooth',
+  },
+];
 
-  init() {
-    if (this.initialized) return;
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      this.ctx = new AudioCtx();
-      this.initialized = true;
-      this.startAmbient();
-      this.startRadio();
-    } catch (e) {
-      console.warn('WebAudio not supported:', e);
-    }
-  }
+// Short melodic phrases for UI moments. Each entry is [frequency, beats].
+const JINGLES = {
+  missionComplete: [
+    [523.25, 1], [659.25, 1], [783.99, 1], [1046.5, 2],
+  ],
+  missionFailed: [
+    [392.0, 1], [329.63, 1], [261.63, 2],
+  ],
+  pickup: [
+    [880.0, 0.5], [1174.7, 1],
+  ],
+  busted: [
+    [311.13, 1], [311.13, 1], [233.08, 2],
+  ],
+  wasted: [
+    [220.0, 1], [174.61, 1], [146.83, 3],
+  ],
+  levelUp: [
+    [659.25, 0.5], [830.61, 0.5], [987.77, 1],
+  ],
+};
 
-  toggleMute() {
-    this.muted = !this.muted;
-    if (this.ctx) {
-      if (this.muted && this.ctx.state === 'running') {
-        this.ctx.suspend();
-      } else if (!this.muted && this.ctx.state === 'suspended') {
-        this.ctx.resume();
-      }
-    }
-    return this.muted;
-  }
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
 
-  // One short pitched blip: an oscillator that slides from one frequency
-  // to another while its gain falls away to silence.
-  _blip(wave, fromHz, toHz, seconds, volume) {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = wave;
-    osc.frequency.setValueAtTime(fromHz, now);
-    osc.frequency.exponentialRampToValueAtTime(toHz, now + seconds);
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + seconds);
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start();
-    osc.stop(now + seconds);
-  }
+export function createAudioEngine() {
+  let ctx = null;
+  let master = null;
+  let musicBus = null;
+  let sfxBus = null;
+  let unlocked = false;
+  let muted = false;
 
-  // A burst of white noise that fades out over the given time.
-  _noiseBurst(seconds, volume) {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-    const length = Math.floor(this.ctx.sampleRate * seconds);
-    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+  // Engine hum nodes, built on unlock.
+  let engineOsc = null;
+  let engineSub = null;
+  let engineFilter = null;
+  let engineGain = null;
+
+  // Siren nodes, built on unlock.
+  let sirenOsc = null;
+  let sirenLfo = null;
+  let sirenGain = null;
+  let sirenOn = false;
+
+  // Radio scheduler state.
+  let stationIndex = 0;
+  let songIndex = 0;
+  let radioTimer = null;
+  let nextNoteTime = 0;
+  let step = 0;
+  let barsPlayed = 0;
+
+  // A reusable white-noise buffer for gunshots, ticks and impacts.
+  let noiseBuffer = null;
+
+  function buildNoiseBuffer() {
+    const length = ctx.sampleRate;
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < length; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+      data[i] = Math.random() * 2 - 1;
     }
-    const source = this.ctx.createBufferSource();
-    source.buffer = buffer;
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + seconds);
-    source.connect(gain);
-    gain.connect(this.ctx.destination);
-    source.start();
+    noiseBuffer = buffer;
   }
 
-  playClick() {
-    if (this.muted) return;
-    this.init();
-    if (!this.ctx) return;
-    this._blip('sine', 600, 800, 0.08, 0.15);
+  function buildEngineHum() {
+    engineOsc = ctx.createOscillator();
+    engineOsc.type = 'sawtooth';
+    engineOsc.frequency.value = 55;
+    engineSub = ctx.createOscillator();
+    engineSub.type = 'square';
+    engineSub.frequency.value = 28;
+    engineFilter = ctx.createBiquadFilter();
+    engineFilter.type = 'lowpass';
+    engineFilter.frequency.value = 320;
+    engineFilter.Q.value = 2;
+    engineGain = ctx.createGain();
+    engineGain.gain.value = 0;
+    engineOsc.connect(engineFilter);
+    engineSub.connect(engineFilter);
+    engineFilter.connect(engineGain);
+    engineGain.connect(sfxBus);
+    engineOsc.start();
+    engineSub.start();
   }
 
-  playJump() {
-    if (this.muted) return;
-    this.init();
-    if (!this.ctx) return;
-    this._blip('triangle', 150, 350, 0.2, 0.2);
+  function buildSiren() {
+    sirenOsc = ctx.createOscillator();
+    sirenOsc.type = 'sine';
+    sirenOsc.frequency.value = 820;
+    sirenLfo = ctx.createOscillator();
+    sirenLfo.type = 'square';
+    sirenLfo.frequency.value = 0.55;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 140;
+    sirenLfo.connect(lfoGain);
+    lfoGain.connect(sirenOsc.frequency);
+    sirenGain = ctx.createGain();
+    sirenGain.gain.value = 0;
+    sirenOsc.connect(sirenGain);
+    sirenGain.connect(sfxBus);
+    sirenOsc.start();
+    sirenLfo.start();
   }
 
-  playFootstep() {
-    if (this.muted) return;
-    this.init();
-    if (!this.ctx) return;
-    this._blip('square', 80, 30, 0.05, 0.08);
+  // Schedule one short synth note on a bus at an exact time.
+  function scheduleTone(freq, at, dur, type, peak, bus) {
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.value = freq;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(peak, at + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + dur);
+    osc.connect(gain);
+    gain.connect(bus);
+    osc.start(at);
+    osc.stop(at + dur + 0.05);
   }
 
-  startAmbient() {
-    if (!this.ctx) return;
-    try {
-      // Looping white noise through a low-pass filter reads as a soft
-      // coastal hum — ocean and distant city traffic rolled into one.
-      const bufferSize = this.ctx.sampleRate * 2;
-      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = Math.random() * 2 - 1;
+  // Schedule one short burst of filtered noise (hat tick, snare-ish snap).
+  function scheduleNoise(at, dur, filterFreq, peak, bus) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = filterFreq;
+    filter.Q.value = 1.2;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(peak, at);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + dur);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(bus);
+    src.start(at);
+    src.stop(at + dur + 0.02);
+  }
+
+  // One step of the radio sequencer: bass + lead + pad + tick.
+  function scheduleStep(station, stepIndex, at) {
+    const beat = 60 / station.bpm;
+    const eighth = beat / 2;
+    const bass = station.bassNotes[stepIndex % station.bassNotes.length];
+    const lead = station.leadNotes[stepIndex % station.leadNotes.length];
+    const bar = Math.floor(stepIndex / 16) % station.padChords.length;
+
+    scheduleTone(bass, at, eighth * 0.9, station.bassWave, 0.16, musicBus);
+    if (stepIndex % 2 === 0) {
+      scheduleTone(lead, at, eighth * 0.9, station.leadWave, 0.05, musicBus);
+    }
+    if (stepIndex % 16 === 0) {
+      for (const freq of station.padChords[bar]) {
+        scheduleTone(freq, at, beat * 4, 'sine', 0.03, musicBus);
       }
-
-      const source = this.ctx.createBufferSource();
-      source.buffer = noiseBuffer;
-      source.loop = true;
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(300, this.ctx.currentTime);
-
-      const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.02, this.ctx.currentTime);
-
-      source.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.ctx.destination);
-      source.start();
-      this.ambientNode = source;
-    } catch (e) {
-      console.warn('Ambient audio error:', e);
+    }
+    // Off-beat shaker tick; the electronic station gets a busier hat.
+    if (stepIndex % 2 === 1) {
+      scheduleNoise(at, 0.05, stationIndex === 0 ? 6000 : 8000, 0.05, musicBus);
     }
   }
 
-  // "SOLMAR FM 98.6" style label for the HUD radio display.
-  currentStationName() {
-    const station = CONFIG.RADIO[this.radioStation];
-    return station.name + ' ' + station.freq;
+  // Look-ahead scheduler: keep notes queued a little ahead of playback.
+  function radioTick() {
+    if (!ctx || !unlocked) return;
+    const station = STATIONS[stationIndex];
+    const eighth = 60 / station.bpm / 2;
+    while (nextNoteTime < ctx.currentTime + 0.15) {
+      scheduleStep(station, step, nextNoteTime);
+      nextNoteTime += eighth;
+      step += 1;
+      if (step % 64 === 0) {
+        barsPlayed += 1;
+        // A new song every eight bars keeps the station feeling alive.
+        if (barsPlayed % 8 === 0) {
+          songIndex = (songIndex + 1) % station.songs.length;
+        }
+      }
+    }
   }
 
-  // A tiny synthesized radio loop: a sunny bassline, one short note per beat.
-  // Station 0 plays it on a square wave, station 1 an octave higher on triangle.
-  startRadio() {
-    this.stopRadio();
-    if (!this.ctx) return;
-    const wave = this.radioStation === 0 ? 'square' : 'triangle';
-    const octave = this.radioStation === 0 ? 1 : 2;
-    let step = 0;
-    this.radioTimer = setInterval(() => {
-      if (this.muted || !this.ctx) return;
+  function startRadio() {
+    if (radioTimer !== null) return;
+    nextNoteTime = ctx.currentTime + 0.1;
+    step = 0;
+    radioTimer = setInterval(radioTick, 40);
+  }
+
+  function stopRadio() {
+    if (radioTimer !== null) {
+      clearInterval(radioTimer);
+      radioTimer = null;
+    }
+  }
+
+  const engine = {
+    // Must be called from a user gesture (the title screen button). Builds
+    // the context and all persistent nodes, then starts the radio loop.
+    unlock() {
+      if (unlocked) return true;
       try {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = wave;
-        osc.frequency.setValueAtTime(
-          RADIO_RIFF[step % RADIO_RIFF.length] * octave,
-          this.ctx.currentTime
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        ctx = new AudioContext();
+      } catch (err) {
+        return false;
+      }
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 0.9;
+      master.connect(ctx.destination);
+      musicBus = ctx.createGain();
+      musicBus.gain.value = 0.5;
+      musicBus.connect(master);
+      sfxBus = ctx.createGain();
+      sfxBus.gain.value = 0.8;
+      sfxBus.connect(master);
+      buildNoiseBuffer();
+      buildEngineHum();
+      buildSiren();
+      unlocked = true;
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      startRadio();
+      return true;
+    },
+
+    isUnlocked() {
+      return unlocked;
+    },
+
+    setMuted(value) {
+      muted = Boolean(value);
+      if (master) {
+        master.gain.value = muted ? 0 : 0.9;
+      }
+      return muted;
+    },
+
+    toggleMute() {
+      return engine.setMuted(!muted);
+    },
+
+    isMuted() {
+      return muted;
+    },
+
+    // Called every frame by the game loop. speedMs is metres per second;
+    // sirenActive is true while any police unit is chasing.
+    update(speedMs, sirenActive) {
+      if (!unlocked || !ctx) return;
+      const speed = Math.max(0, speedMs || 0);
+      const mph = speed * MPH_PER_MS;
+      // Engine hum: pitch climbs with speed, volume fades in once rolling.
+      const rpm = 55 + Math.min(mph, 140) * 1.6;
+      engineOsc.frequency.setTargetAtTime(rpm, ctx.currentTime, 0.08);
+      engineSub.frequency.setTargetAtTime(rpm / 2, ctx.currentTime, 0.08);
+      engineFilter.frequency.setTargetAtTime(
+        300 + Math.min(mph, 140) * 9,
+        ctx.currentTime,
+        0.1,
+      );
+      const humLevel = speed > 0.5 ? 0.05 + Math.min(mph / 140, 1) * 0.05 : 0.02;
+      engineGain.gain.setTargetAtTime(humLevel, ctx.currentTime, 0.1);
+      // Siren: fade the two-tone wail in or out.
+      if (sirenActive !== sirenOn) {
+        sirenOn = Boolean(sirenActive);
+        sirenGain.gain.setTargetAtTime(
+          sirenOn ? 0.045 : 0,
+          ctx.currentTime,
+          0.25,
         );
-        gain.gain.setValueAtTime(RADIO_NOTE_GAIN, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + RADIO_NOTE_SECONDS);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(this.ctx.currentTime + RADIO_NOTE_SECONDS);
-        step++;
-      } catch (e) {
-        // A missed radio note is not worth crashing the game over.
       }
-    }, RADIO_BEAT_MS);
-  }
+    },
 
-  stopRadio() {
-    if (this.radioTimer) {
-      clearInterval(this.radioTimer);
-      this.radioTimer = null;
-    }
-  }
+    // A sharp crack: burst of noise through a lowpass, plus a low thump.
+    playGunshot() {
+      if (!unlocked || !ctx) return;
+      const now = ctx.currentTime;
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(3200, now);
+      filter.frequency.exponentialRampToValueAtTime(300, now + 0.12);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.5, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(sfxBus);
+      src.start(now);
+      src.stop(now + 0.2);
+      scheduleTone(70, now, 0.12, 'sine', 0.35, sfxBus);
+    },
 
-  // Tune to the next station (wrapping around) and restart the loop on it.
-  cycleRadio() {
-    this.radioStation = (this.radioStation + 1) % CONFIG.RADIO.length;
-    if (this.radioTimer) this.startRadio();
-    return this.currentStationName();
-  }
+    // A short blip for menu navigation and button presses.
+    playClick() {
+      if (!unlocked || !ctx) return;
+      scheduleTone(880, ctx.currentTime, 0.07, 'square', 0.08, sfxBus);
+    },
 
-  // One short synthesized shot per weapon, each with its own character.
-  playWeaponSound(kind) {
-    if (this.muted) return;
-    this.init();
-    if (!this.ctx) return;
-    try {
-      if (kind === 'FISTS') {
-        this._blip('sine', 90, 90, 0.06, 0.12);
-      } else if (kind === '.38') {
-        this._blip('square', 900, 200, 0.08, 0.25);
-      } else if (kind === 'SMG') {
-        this._blip('square', 1200, 1200, 0.04, 0.15);
-      } else if (kind === '12G') {
-        this._blip('sine', 120, 40, 0.25, 0.35);
-        this._noiseBurst(0.1, 0.2);
-      } else if (kind === 'AR-9') {
-        this._blip('sawtooth', 700, 150, 0.12, 0.25);
+    // A little melodic phrase for mission moments. Unknown kinds fall
+    // back to the pickup blip so a bad key never throws.
+    playJingle(kind) {
+      if (!unlocked || !ctx) return;
+      const phrase = JINGLES[kind] || JINGLES.pickup;
+      const now = ctx.currentTime;
+      let at = now + 0.02;
+      for (const [freq, beats] of phrase) {
+        const dur = beats * 0.22;
+        scheduleTone(freq, at, dur, 'triangle', 0.12, sfxBus);
+        at += dur;
       }
-    } catch (e) {
-      console.warn('Weapon sound error:', e);
-    }
-  }
+    },
 
-  // A quiet two-tone police siren loop; silent when the heat is off.
-  startSiren() {
-    if (this.sirenNodes || !this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(SIREN_LOW_HZ, this.ctx.currentTime);
-      gain.gain.setValueAtTime(SIREN_GAIN, this.ctx.currentTime);
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.start();
-      let high = false;
-      const timer = setInterval(() => {
-        if (!this.ctx) return;
-        high = !high;
-        osc.frequency.setValueAtTime(high ? SIREN_HIGH_HZ : SIREN_LOW_HZ, this.ctx.currentTime);
-      }, SIREN_STEP_MS);
-      this.sirenNodes = { osc, gain, timer };
-    } catch (e) {
-      console.warn('Siren error:', e);
-    }
-  }
+    // A dull thud for collisions and footsteps.
+    playThud(strength) {
+      if (!unlocked || !ctx) return;
+      const peak = 0.1 + Math.min(Math.max(strength || 0.5, 0), 1) * 0.25;
+      scheduleTone(55, ctx.currentTime, 0.15, 'sine', peak, sfxBus);
+    },
 
-  stopSiren() {
-    if (!this.sirenNodes) return;
-    try {
-      clearInterval(this.sirenNodes.timer);
-      this.sirenNodes.osc.stop();
-      this.sirenNodes.gain.disconnect();
-    } catch (e) {
-      // The siren may already be gone; nothing to clean up.
-    }
-    this.sirenNodes = null;
-  }
+    nextStation() {
+      stationIndex = (stationIndex + 1) % STATIONS.length;
+      songIndex = 0;
+      step = 0;
+      if (ctx && unlocked) {
+        nextNoteTime = ctx.currentTime + 0.08;
+      }
+      return engine.getStation();
+    },
+
+    setStation(index) {
+      const i = Number(index);
+      if (Number.isInteger(i) && i >= 0 && i < STATIONS.length) {
+        stationIndex = i;
+        songIndex = 0;
+        step = 0;
+        if (ctx && unlocked) {
+          nextNoteTime = ctx.currentTime + 0.08;
+        }
+      }
+      return engine.getStation();
+    },
+
+    // What the HUD shows next to the speed: station name and song title.
+    getStation() {
+      const station = STATIONS[stationIndex];
+      return {
+        index: stationIndex,
+        name: station.name,
+        frequency: station.frequency,
+        genre: station.genre,
+        songTitle: station.songs[songIndex],
+      };
+    },
+
+    getStationName() {
+      return STATIONS[stationIndex].name;
+    },
+
+    getSongTitle() {
+      return STATIONS[stationIndex].songs[songIndex];
+    },
+
+    // Tear down the scheduler and close the context (used on unload).
+    dispose() {
+      stopRadio();
+      if (ctx) {
+        ctx.close();
+        ctx = null;
+      }
+      unlocked = false;
+    },
+  };
+
+  return engine;
 }

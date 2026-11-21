@@ -1,114 +1,203 @@
-// Keyboard and mouse input for Solmar Bay.
-// Tracks which keys are held down, remembers each physical press exactly
-// once until the game loop spends it, and turns mouse movement into
-// look deltas — from pointer lock while playing, or from dragging when
-// the pointer is free.
-export class InputManager {
-  constructor(domElement, onMuteToggle, onPauseToggle, onInteract) {
-    this.domElement = domElement;
-    this.onMuteToggle = onMuteToggle;
-    this.onPauseToggle = onPauseToggle;
-    this.onInteract = onInteract;
+// input.js — keyboard and mouse input for Solmar Bay.
+//
+// The factory builds one input state by listening to the keyboard (and the
+// mouse, for shooting). The game loop reads two views of every action:
+//   held    — true while the key is down (movement, running, driving)
+//   pressed — true only on the frame the key went down (enter car, shoot,
+//             radio, weapons, pause, mute), cleared by update() each frame
+// so a single tap never fires twice.
+//
+// Title screen buttons are plain DOM elements owned by the page; input only
+// reports where the player clicked, in case the loop needs the position.
 
-    // Keys currently held, and keys tapped since the last frame.
-    this.keys = {};
-    this._justPressed = {};
-    // Accumulated mouse movement since the last consumeMouseDelta call.
-    this.mouseMoveX = 0;
-    this.mouseMoveY = 0;
-    this.isPointerLocked = false;
-    this.mouseDown = false;
-    this.lastMouseX = 0;
-    this.lastMouseY = 0;
+const ACTION_KEYS = {
+  forward: ['KeyW', 'ArrowUp'],
+  back: ['KeyS', 'ArrowDown'],
+  left: ['KeyA', 'ArrowLeft'],
+  right: ['KeyD', 'ArrowRight'],
+  run: ['ShiftLeft', 'ShiftRight'],
+  enterExit: ['KeyE'],
+  shoot: ['Space'],
+  radio: ['KeyR'],
+  weapon1: ['Digit1'],
+  weapon2: ['Digit2'],
+  weapon3: ['Digit3'],
+  weapon4: ['Digit4'],
+  weapon5: ['Digit5'],
+  pause: ['Escape'],
+  mute: ['KeyM'],
+};
 
-    this.initListeners();
+// Keys whose default browser behaviour (page scroll, etc.) we suppress
+// while the game has focus.
+const PREVENT_DEFAULT_CODES = new Set([
+  'Space',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+]);
+
+export const INPUT_ACTIONS = Object.keys(ACTION_KEYS);
+
+export function createInput() {
+  const held = {};
+  const pressed = {};
+  for (const action of INPUT_ACTIONS) {
+    held[action] = false;
+    pressed[action] = false;
   }
 
-  initListeners() {
-    window.addEventListener('keydown', (e) => this._onKeyDown(e));
-    window.addEventListener('keyup', (e) => this._onKeyUp(e));
-    window.addEventListener('mousemove', (e) => this._onMouseMove(e));
-    window.addEventListener('mousedown', (e) => this._onMouseDown(e));
-    window.addEventListener('mouseup', () => this._onMouseUp());
+  // Mouse state. shoot is also driven by the mouse button so the player
+  // can aim with the mouse; lastClick records where a click landed.
+  // Keyboard and mouse each hold "shoot" independently, so releasing one
+  // never cancels the other.
+  let mouseDown = false;
+  let shootKeyHeld = false;
+  let lastClick = null;
 
-    this.domElement.addEventListener('click', () => this._onCanvasClick());
-    document.addEventListener('pointerlockchange', () => this._onLockChange());
+  function syncShootHeld() {
+    held.shoot = shootKeyHeld || mouseDown;
   }
 
-  _onKeyDown(e) {
-    // A held key auto-repeats; only the first down-stroke counts as a press.
-    if (!e.repeat) this._justPressed[e.code] = true;
-    this.keys[e.code] = true;
-    if (e.code === 'KeyM' && this.onMuteToggle) {
-      this.onMuteToggle();
+  function actionForCode(code) {
+    for (const action of INPUT_ACTIONS) {
+      if (ACTION_KEYS[action].includes(code)) {
+        return action;
+      }
     }
-    if (e.code === 'Escape' && this.onPauseToggle) {
-      this.onPauseToggle();
+    return null;
+  }
+
+  function onKeyDown(event) {
+    const action = actionForCode(event.code);
+    if (!action) return;
+    if (PREVENT_DEFAULT_CODES.has(event.code)) {
+      event.preventDefault();
     }
-    if (e.code === 'KeyE' && this.onInteract) {
-      this.onInteract();
+    // Ignore auto-repeat: a held key must not re-trigger pressed actions.
+    if (event.repeat) return;
+    if (!held[action]) {
+      pressed[action] = true;
+    }
+    if (action === 'shoot') {
+      shootKeyHeld = true;
+      syncShootHeld();
+    } else {
+      held[action] = true;
     }
   }
 
-  _onKeyUp(e) {
-    this.keys[e.code] = false;
-  }
-
-  _onCanvasClick() {
-    if (!this.isPointerLocked) {
-      this.domElement.requestPointerLock?.();
+  function onKeyUp(event) {
+    const action = actionForCode(event.code);
+    if (!action) return;
+    if (action === 'shoot') {
+      shootKeyHeld = false;
+      syncShootHeld();
+    } else {
+      held[action] = false;
     }
   }
 
-  _onLockChange() {
-    this.isPointerLocked = document.pointerLockElement === this.domElement;
-  }
-
-  _onMouseMove(e) {
-    if (this.isPointerLocked) {
-      this.mouseMoveX += e.movementX;
-      this.mouseMoveY += e.movementY;
-    } else if (this.mouseDown) {
-      this.mouseMoveX += e.clientX - this.lastMouseX;
-      this.mouseMoveY += e.clientY - this.lastMouseY;
+  function onBlur() {
+    // The window losing focus must not leave a key stuck down.
+    for (const action of INPUT_ACTIONS) {
+      held[action] = false;
     }
-    this.lastMouseX = e.clientX;
-    this.lastMouseY = e.clientY;
+    shootKeyHeld = false;
+    mouseDown = false;
   }
 
-  _onMouseDown(e) {
-    this.mouseDown = true;
-    this.lastMouseX = e.clientX;
-    this.lastMouseY = e.clientY;
-  }
-
-  _onMouseUp() {
-    this.mouseDown = false;
-  }
-
-  consumeMouseDelta() {
-    const dx = this.mouseMoveX;
-    const dy = this.mouseMoveY;
-    this.mouseMoveX = 0;
-    this.mouseMoveY = 0;
-    return { dx, dy };
-  }
-
-  isPressed(code) {
-    return !!this.keys[code];
-  }
-
-  // True exactly once per physical key press, then the press is spent.
-  consumeKey(code) {
-    if (this._justPressed[code]) {
-      this._justPressed[code] = false;
-      return true;
+  function onMouseDown(event) {
+    // Only the primary button shoots, and only when the click lands on
+    // the game canvas itself — clicks on menu buttons and panels must
+    // never fire a shot (or raise the wanted level) as a side effect.
+    if (event.button !== 0) return;
+    if (event.target && event.target.tagName !== 'CANVAS') return;
+    mouseDown = true;
+    if (!held.shoot) {
+      pressed.shoot = true;
     }
-    return false;
+    syncShootHeld();
+    lastClick = { x: event.clientX, y: event.clientY, time: Date.now() };
   }
 
-  // Called once per frame by the game loop so an unconsumed press never lingers.
-  endFrame() {
-    this._justPressed = {};
+  function onMouseUp(event) {
+    if (event.button !== 0) return;
+    mouseDown = false;
+    syncShootHeld();
   }
+
+  function onContextMenu(event) {
+    event.preventDefault();
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
+  window.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('contextmenu', onContextMenu);
+
+  const input = {
+    // Live state objects, read directly by the loop if it prefers.
+    held,
+    pressed,
+
+    isHeld(action) {
+      return Boolean(held[action]);
+    },
+
+    wasPressed(action) {
+      return Boolean(pressed[action]);
+    },
+
+    // True while the primary mouse button is down.
+    isMouseDown() {
+      return mouseDown;
+    },
+
+    // The most recent click position ({x, y, time}) or null.
+    getLastClick() {
+      return lastClick;
+    },
+
+    // Take the pending click (if any) and clear it, so the loop consumes
+    // each click exactly once.
+    consumeClick() {
+      const click = lastClick;
+      lastClick = null;
+      return click;
+    },
+
+    // Which weapon slot (1-5) was just tapped, or 0 when none was.
+    pressedWeaponSlot() {
+      for (let slot = 1; slot <= 5; slot += 1) {
+        if (pressed[`weapon${slot}`]) {
+          return slot;
+        }
+      }
+      return 0;
+    },
+
+    // End-of-frame housekeeping: the loop calls this once per frame after
+    // it has read the pressed flags, so one tap fires exactly once.
+    update() {
+      for (const action of INPUT_ACTIONS) {
+        pressed[action] = false;
+      }
+    },
+
+    // Detach all listeners (used when the game is torn down).
+    destroy() {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('contextmenu', onContextMenu);
+    },
+  };
+
+  return input;
 }

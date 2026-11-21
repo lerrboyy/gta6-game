@@ -1,38 +1,66 @@
-// A small deterministic number source for building the city.
+// Seeded random-number generator for Solmar Bay.
 //
-// The city is generated from a seed, and it has to come out the same way
-// every time — same streets, same buildings, same screenshots — so the
-// generator here is a fixed, simple one rather than Math.random(). Feed it
-// the same starting seed and it hands back the same sequence of numbers,
-// which is what keeps every play session looking at the same Solmar Bay.
+// The whole city is built from one fixed seed, so every load produces the
+// same streets, buildings and palm trees. This module implements a small
+// mulberry-style generator from scratch: a 32-bit integer state is scrambled
+// on every draw and the result is scaled into the [0, 1) range. Everything
+// else in the game (ranges, picks, shuffles) is built on top of that one
+// draw, so the sequence stays deterministic as long as the seed is.
 
-export class SeededRandom {
-  // The default seed is the one the city builder uses when no other
-  // seed is given.
-  constructor(seed = 12345) {
-    this.seed = seed;
+export function createSeededRandom(seed) {
+  // Fold any numeric seed into an unsigned 32-bit starting state. Zero is
+  // a poor starting state for this scrambler, so it is nudged to a fixed
+  // non-zero value instead.
+  let state = (seed >>> 0) || 0x9e3779b9;
+
+  function next() {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let scrambled = state;
+    scrambled = Math.imul(scrambled ^ (scrambled >>> 15), scrambled | 1);
+    scrambled ^= scrambled + Math.imul(scrambled ^ (scrambled >>> 7), scrambled | 61);
+    return ((scrambled ^ (scrambled >>> 14)) >>> 0) / 4294967296;
   }
 
-  // Advance the generator one step and return a float in [0, 1).
-  // The step is a classic linear congruential update: multiply the
-  // stored seed, add a constant, and wrap it into a fixed range.
-  next() {
-    this.seed = (this.seed * 9301 + 49297) % 233280;
-    return this.seed / 233280;
+  // A float in [0, 1).
+  function float() {
+    return next();
   }
 
-  // A float between min (inclusive) and max (exclusive).
-  range(min, max) {
-    return min + this.next() * (max - min);
+  // A float in [min, max). The caller may pass the bounds in either order;
+  // the smaller one always wins as the lower end.
+  function range(min, max) {
+    const lo = Math.min(min, max);
+    const hi = Math.max(min, max);
+    return lo + next() * (hi - lo);
   }
 
-  // A whole number between min and max, both ends included.
-  int(min, max) {
-    return Math.floor(this.range(min, max + 1));
+  // An integer in [min, max], both ends inclusive.
+  function integer(min, max) {
+    const lo = Math.ceil(Math.min(min, max));
+    const hi = Math.floor(Math.max(min, max));
+    return lo + Math.floor(next() * (hi - lo + 1));
   }
 
-  // One element picked from the given array, uniformly at random.
-  choice(arr) {
-    return arr[this.int(0, arr.length - 1)];
+  // One element chosen at random from an array. Returns undefined for an
+  // empty array rather than throwing, so callers can treat "no choice"
+  // as a normal result.
+  function pick(list) {
+    if (!list || list.length === 0) return undefined;
+    return list[Math.floor(next() * list.length)];
   }
+
+  // A shuffled copy of an array (Fisher-Yates). The original array is
+  // never modified, so the same source list can be reused for later draws.
+  function shuffle(list) {
+    const copy = Array.from(list || []);
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1));
+      const held = copy[i];
+      copy[i] = copy[j];
+      copy[j] = held;
+    }
+    return copy;
+  }
+
+  return { next: float, float, range, integer, pick, shuffle };
 }

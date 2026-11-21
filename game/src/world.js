@@ -1,369 +1,340 @@
-// Solmar Bay — the world around Rico: the player himself, his stats and
-// weapons, the day clock, and the chase camera.
+// world.js — Solmar Bay world state.
 //
-// WorldManager builds Rico as a small humanoid with swinging limbs, owns
-// his health, cash, wanted level, armour and respect, and keeps the three
-// city systems ticking: vehicles, pedestrians and police. On foot he
-// walks, sprints and jumps through the streets; in a car he rides along
-// and the camera pulls back behind the vehicle.
-import * as THREE from './three.js';
-import { CONFIG } from './config.js';
-import { VehicleManager } from './vehicles.js';
-import { PedestrianManager } from './pedestrians.js';
-import { PoliceManager } from './police.js';
+// The world object is the single source of truth for everything the HUD
+// reads: the day and clock, money, respect, armour, health and the wanted
+// level. The loop creates it once, hands it to the other modules, and the
+// mission module pays out through it while the police module reads the
+// wanted level from it.
+//
+// All behaviour here is plain functions that take the world first, so the
+// state stays a simple object that can be snapshotted to JSON for saving
+// and restored later without any class machinery.
 
-// Chase-camera framing: on foot the camera trails 6 back and 2.5 up;
-// behind the wheel it pulls out to 10.5 back and 3 up, and it always
-// looks at a point 1.2 above Rico.
-const ON_FOOT_DIST = 6;
-const ON_FOOT_HEIGHT = 2.5;
-const DRIVING_DIST = 10.5;
-const DRIVING_HEIGHT = 3.0;
-const LOOK_ABOVE = 1.2;
-const LOOK_SENS = 0.003;
-const PITCH_CAP = Math.PI / 3;
+const START_DAY = 1;
+const START_HOUR = 9;
+const START_MINUTE = 31;
+const START_MONEY = 0;
+const START_RESPECT = 0;
+const START_ARMOUR = 0;
+const START_HEALTH = 100;
+const MAX_WANTED = 5;
+const MAX_RESPECT = 100;
+const MAX_ARMOUR = 100;
+const MAX_HEALTH = 100;
 
-export class WorldManager {
-  constructor(scene, cityGenerator) {
-    this.scene = scene;
-    this.city = cityGenerator;
+// One real second moves the clock this many game minutes. The city lives in
+// a long golden hour, so the clock drifts slowly through the sunset.
+const MINUTES_PER_SECOND = 1;
 
-    // Rico at the start of a fresh game.
-    this.position = new THREE.Vector3(0, 0, 0);
-    this.velocity = new THREE.Vector3(0, 0, 0);
-    this.rotation = 0;
-    this.pitch = 0;
-    this.health = 100;
-    this.cash = 500;
-    this.wanted = 0;
-    this.armor = 0;
-    this.respect = 0;
-    this.day = 1;
-    this.clockMinutes = 9 * 60 + 31;
-    this.weaponSlot = 1;
-    this.ownedWeapons = [0, 1];
-    this.isGrounded = false;
-    this.isDriving = false;
-    this.walkPhase = 0;
+const SAVE_VERSION = 1;
 
-    // The systems that keep the city alive around him.
-    this.vehicles = new VehicleManager(scene, this.city);
-    this.vehicles.init();
-    this.pedestrians = new PedestrianManager(scene, this.city);
-    this.pedestrians.spawn();
-    this.police = new PoliceManager(scene, this.city);
+function clamp(value, min, max) {
+  return value < min ? min : value > max ? max : value;
+}
 
-    this._assembleRico();
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+// ---------------------------------------------------------------------------
+// Creation
+// ---------------------------------------------------------------------------
+
+export function createWorld(initial) {
+  const seed = initial || {};
+  const world = {
+    day: seed.day !== undefined ? seed.day : START_DAY,
+    hour: seed.hour !== undefined ? seed.hour : START_HOUR,
+    minute: seed.minute !== undefined ? seed.minute : START_MINUTE,
+    money: seed.money !== undefined ? seed.money : START_MONEY,
+    respect: seed.respect !== undefined ? seed.respect : START_RESPECT,
+    armour: seed.armour !== undefined ? seed.armour : START_ARMOUR,
+    health: seed.health !== undefined ? seed.health : START_HEALTH,
+    wanted: seed.wanted !== undefined ? seed.wanted : 0,
+    // Total game minutes elapsed since the start of day 1; handy for the
+    // save file and for anything that needs "how long has Rico been out".
+    totalMinutes:
+      seed.totalMinutes !== undefined
+        ? seed.totalMinutes
+        : (START_DAY - 1) * 1440 + START_HOUR * 60 + START_MINUTE,
+    jobsCompleted: seed.jobsCompleted !== undefined ? seed.jobsCompleted : 0,
+    bustedCount: seed.bustedCount !== undefined ? seed.bustedCount : 0,
+    wastedCount: seed.wastedCount !== undefined ? seed.wastedCount : 0,
+  };
+  normaliseClock(world);
+  return world;
+}
+
+// Keep hour/minute/day consistent after any direct edit of the fields.
+function normaliseClock(world) {
+  let extraDays = 0;
+  while (world.minute >= 60) {
+    world.minute -= 60;
+    world.hour += 1;
   }
-
-  // Build Rico: navy legs and a teal jacket on pivot groups so the walk
-  // cycle can swing them, a dark belt, teal arms, a skin-tone head with
-  // flattened dark hair, and a black cap with a brim.
-  _assembleRico() {
-    this.playerGroup = new THREE.Group();
-    const jacketMat = new THREE.MeshStandardMaterial({ color: 0x0e7c7b, roughness: 0.6 });
-    const denimMat = new THREE.MeshStandardMaterial({ color: 0x1f2a44, roughness: 0.7 });
-
-    const legShape = new THREE.BoxGeometry(0.22, 0.8, 0.28);
-    this.legL = this._swingLimb(-0.18, 0.8, legShape, denimMat, -0.4);
-    this.legR = this._swingLimb(0.18, 0.8, legShape, denimMat, -0.4);
-
-    this.bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.75, 0.4), jacketMat);
-    this.bodyMesh.position.y = 1.18;
-    this.bodyMesh.castShadow = true;
-    this.playerGroup.add(this.bodyMesh);
-
-    const belt = new THREE.Mesh(
-      new THREE.BoxGeometry(0.74, 0.1, 0.42),
-      new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 })
-    );
-    belt.position.y = 0.82;
-    belt.castShadow = true;
-    this.playerGroup.add(belt);
-
-    const armShape = new THREE.BoxGeometry(0.18, 0.65, 0.22);
-    this.armL = this._swingLimb(-0.46, 1.5, armShape, jacketMat, -0.32);
-    this.armR = this._swingLimb(0.46, 1.5, armShape, jacketMat, -0.32);
-
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe8b88a, roughness: 0.6 });
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), skinMat);
-    head.position.y = 1.78;
-    head.castShadow = true;
-    this.playerGroup.add(head);
-
-    const hair = new THREE.Mesh(
-      new THREE.SphereGeometry(0.31, 8, 8),
-      new THREE.MeshStandardMaterial({ color: 0x3b2314, roughness: 0.8 })
-    );
-    hair.position.y = 1.86;
-    hair.scale.set(1, 0.7, 1);
-    this.playerGroup.add(hair);
-
-    const capMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7 });
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 8), capMat);
-    cap.position.y = 1.95;
-    this.playerGroup.add(cap);
-
-    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.25), capMat);
-    brim.position.set(0, 1.93, 0.3);
-    this.playerGroup.add(brim);
-
-    this.scene.add(this.playerGroup);
+  while (world.minute < 0) {
+    world.minute += 60;
+    world.hour -= 1;
   }
-
-  // A limb that swings from a pivot: the pivot sits at (px, py) and the
-  // box hangs `drop` below it, so rotating the pivot swings the limb.
-  _swingLimb(px, py, shape, material, drop) {
-    const pivot = new THREE.Group();
-    pivot.position.set(px, py, 0);
-    const limb = new THREE.Mesh(shape, material);
-    limb.position.y = drop;
-    limb.castShadow = true;
-    pivot.add(limb);
-    this.playerGroup.add(pivot);
-    return pivot;
+  while (world.hour >= 24) {
+    world.hour -= 24;
+    extraDays += 1;
   }
-
-  setPosition(x, y, z) {
-    this.position.set(x, y, z);
-    this.playerGroup.position.copy(this.position);
+  while (world.hour < 0) {
+    world.hour += 24;
+    extraDays -= 1;
   }
+  world.day = Math.max(1, world.day + extraDays);
+}
 
-  // Climb into the nearest car within 5 units — stealing it earns a
-  // wanted star — or step back out 2.5 to the side of the driven car.
-  toggleCarEnterExit() {
-    if (this.isDriving) {
-      if (this.vehicles.drivenCar) {
-        this.position.copy(this.vehicles.drivenCar.position)
-          .add(new THREE.Vector3(2.5, 0, 0));
-        this.playerGroup.position.copy(this.position);
-        this.playerGroup.visible = true;
-        this.vehicles.drivenCar = null;
-      }
-      this.isDriving = false;
-      return;
-    }
+// ---------------------------------------------------------------------------
+// Clock
+// ---------------------------------------------------------------------------
 
-    const nearby = this.vehicles.getNearestCar(this.position, 5.0);
-    if (nearby) {
-      this.vehicles.drivenCar = nearby;
-      this.isDriving = true;
-      this.playerGroup.visible = false;
-      this.wanted = Math.min(5, this.wanted + 1);
-    }
+export function advanceClock(world, dtSeconds) {
+  if (!world || !dtSeconds) return world;
+  const minutes = dtSeconds * MINUTES_PER_SECOND;
+  world.totalMinutes += minutes;
+  const whole = Math.floor(minutes);
+  // Carry fractional minutes so slow frame rates do not lose time.
+  advanceClock.carry = (advanceClock.carry || 0) + (minutes - whole);
+  let add = whole;
+  if (advanceClock.carry >= 1) {
+    add += Math.floor(advanceClock.carry);
+    advanceClock.carry -= Math.floor(advanceClock.carry);
   }
+  world.minute += add;
+  normaliseClock(world);
+  return world;
+}
 
-  // Draw a weapon Rico already owns; unknown or unowned slots refuse.
-  switchWeapon(slot) {
-    if (CONFIG.WEAPONS[slot] && this.ownedWeapons.includes(slot)) {
-      this.weaponSlot = slot;
-      return true;
-    }
-    return false;
+export function setClock(world, hour, minute, day) {
+  world.hour = clamp(Math.floor(hour), 0, 23);
+  world.minute = clamp(Math.floor(minute), 0, 59);
+  if (day !== undefined) world.day = Math.max(1, Math.floor(day));
+  world.totalMinutes = (world.day - 1) * 1440 + world.hour * 60 + world.minute;
+  return world;
+}
+
+export function clockText(world) {
+  return `DAY ${world.day} ${pad2(world.hour)}:${pad2(world.minute)}`;
+}
+
+export function timeOfDay(world) {
+  const hour = world.hour + world.minute / 60;
+  if (hour >= 5 && hour < 8) return 'dawn';
+  if (hour >= 8 && hour < 17) return 'day';
+  if (hour >= 17 && hour < 20) return 'sunset';
+  if (hour >= 20 && hour < 23) return 'dusk';
+  return 'night';
+}
+
+// ---------------------------------------------------------------------------
+// Money and respect
+// ---------------------------------------------------------------------------
+
+export function addMoney(world, amount) {
+  world.money += amount;
+  return world.money;
+}
+
+export function spendMoney(world, amount) {
+  if (world.money < amount) return false;
+  world.money -= amount;
+  return true;
+}
+
+export function addRespect(world, amount) {
+  world.respect = clamp(world.respect + amount, 0, MAX_RESPECT);
+  return world.respect;
+}
+
+export function moneyText(world) {
+  return `$${Math.floor(world.money).toLocaleString('en-US')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Wanted level
+// ---------------------------------------------------------------------------
+
+export function setWanted(world, level) {
+  world.wanted = clamp(Math.floor(level), 0, MAX_WANTED);
+  return world.wanted;
+}
+
+export function raiseWanted(world, amount) {
+  world.wanted = clamp(world.wanted + (amount || 1), 0, MAX_WANTED);
+  return world.wanted;
+}
+
+export function lowerWanted(world, amount) {
+  world.wanted = clamp(world.wanted - (amount || 1), 0, MAX_WANTED);
+  return world.wanted;
+}
+
+export function clearWanted(world) {
+  world.wanted = 0;
+  return world;
+}
+
+// ---------------------------------------------------------------------------
+// Health and armour
+// ---------------------------------------------------------------------------
+
+export function damagePlayer(world, amount) {
+  let remaining = amount;
+  // Armour soaks damage first; whatever is left hits health.
+  if (world.armour > 0) {
+    const absorbed = Math.min(world.armour, remaining);
+    world.armour -= absorbed;
+    remaining -= absorbed;
   }
+  world.health = clamp(world.health - remaining, 0, MAX_HEALTH);
+  return world.health;
+}
 
-  // Buy a weapon: it must exist, not be owned yet, and be affordable.
-  // Success spends the cash, adds the slot and draws the new weapon.
-  buyWeapon(slot) {
-    const weapon = CONFIG.WEAPONS[slot];
-    if (!weapon) return false;
-    if (this.ownedWeapons.includes(slot)) return false;
-    if (this.cash < weapon.price) return false;
-    this.cash -= weapon.price;
-    this.ownedWeapons.push(slot);
-    this.weaponSlot = slot;
-    return true;
-  }
+export function healPlayer(world, amount) {
+  world.health = clamp(world.health + amount, 0, MAX_HEALTH);
+  return world.health;
+}
 
-  currentWeapon() {
-    return CONFIG.WEAPONS[this.weaponSlot];
-  }
+export function addArmour(world, amount) {
+  world.armour = clamp(world.armour + amount, 0, MAX_ARMOUR);
+  return world.armour;
+}
 
-  // A hit first eats into armour — up to half the damage, rounded down —
-  // and the rest comes off health, which never drops below zero.
-  takeDamage(amount) {
-    const absorbed = Math.min(this.armor, Math.floor(amount / 2));
-    this.armor -= absorbed;
-    this.health = Math.max(0, this.health - (amount - absorbed));
-    return this.health;
-  }
+export function isWasted(world) {
+  return world.health <= 0;
+}
 
-  // Bank respect points and report the highest rank title reached.
-  addRespect(points) {
-    this.respect += points;
-    let title = CONFIG.RESPECT_LEVELS[0].name;
-    for (const rank of CONFIG.RESPECT_LEVELS) {
-      if (this.respect >= rank.threshold) title = rank.name;
-    }
-    return title;
-  }
+export function isBusted(world) {
+  // Busted is decided by the police module; the world only records it.
+  return false;
+}
 
-  // "DAY 1 09:31": the day number, then the zero-padded 24-hour time.
-  clockText() {
-    const hours = Math.floor(this.clockMinutes / 60);
-    const minutes = Math.floor(this.clockMinutes % 60);
-    const hh = String(hours).padStart(2, '0');
-    const mm = String(minutes).padStart(2, '0');
-    return `DAY ${this.day} ${hh}:${mm}`;
-  }
+export function recordBusted(world) {
+  world.bustedCount += 1;
+  clearWanted(world);
+  return world.bustedCount;
+}
 
-  update(dt, input, audio) {
-    // A full in-game day passes in CONFIG.CLOCK.dayLengthMin minutes of
-    // play; past midnight the clock wraps and the day ticks over.
-    this.clockMinutes += dt * (24 * 60 / (CONFIG.CLOCK.dayLengthMin * 60));
-    if (this.clockMinutes >= 24 * 60) {
-      this.clockMinutes -= 24 * 60;
-      this.day += 1;
-    }
+export function recordWasted(world) {
+  world.wastedCount += 1;
+  world.health = MAX_HEALTH;
+  clearWanted(world);
+  return world.wastedCount;
+}
 
-    // Traffic, pedestrians and police always tick, driving or not.
-    this.vehicles.update(dt, input, this);
-    this.pedestrians.update(dt, this);
-    this.police.update(dt, this);
+export function completeJob(world, payout, respectGain) {
+  if (payout) addMoney(world, payout);
+  if (respectGain) addRespect(world, respectGain);
+  world.jobsCompleted += 1;
+  return world.jobsCompleted;
+}
 
-    // Behind the wheel Rico just rides along with the car.
-    if (this.isDriving) {
-      if (this.vehicles.drivenCar) {
-        this.position.copy(this.vehicles.drivenCar.position);
-        this.playerGroup.position.copy(this.position);
-      }
-      return;
-    }
+// ---------------------------------------------------------------------------
+// Sunset lighting
+// ---------------------------------------------------------------------------
+//
+// The sun hangs low through the golden hour and the light turns warm and
+// orange as it drops. The renderer reads these values each frame and tints
+// the sky dome, the directional sun light and the ambient light with them.
 
-    this._turnWithMouse(input);
-    const onTheMove = this._walk(dt, input, audio);
-    this._swingLimbs(dt, onTheMove, audio);
-  }
+export function sunsetLighting(world) {
+  const hour = world.hour + world.minute / 60;
+  // Sun elevation as a 0..1 curve: high at noon, touching the horizon at
+  // 19:30, gone by 20:30. Midday is 1, sunset is 0.
+  let elevation;
+  if (hour <= 12) elevation = 0.55 + 0.45 * (hour / 12);
+  else if (hour <= 19.5) elevation = 1 - ((hour - 12) / 7.5) * 0.95;
+  else elevation = 0.05;
+  elevation = clamp(elevation, 0, 1);
 
-  // Mouse look: yaw turns Rico, pitch tilts the camera, capped at sixty
-  // degrees either way.
-  _turnWithMouse(input) {
-    const delta = input.consumeMouseDelta();
-    this.rotation -= delta.dx * LOOK_SENS;
-    this.pitch = Math.max(
-      -PITCH_CAP,
-      Math.min(PITCH_CAP, this.pitch - delta.dy * LOOK_SENS)
-    );
-    this.playerGroup.rotation.y = this.rotation;
-  }
+  // Warmth is strongest when the sun is low: 0 at noon, 1 at the horizon.
+  const warmth = clamp(1 - elevation, 0, 1);
+  const phase = timeOfDay(world);
 
-  // On-foot movement: WASD or arrows rotated by the facing yaw, sprint
-  // with either Shift, Space to jump, gravity in the air, axis-by-axis
-  // collision against the city, and landing on the street or the highest
-  // rooftop underfoot. Returns true while Rico is actually moving.
-  _walk(dt, input, audio) {
-    const dir = new THREE.Vector3();
-    if (input.isPressed('KeyW') || input.isPressed('ArrowUp')) dir.z -= 1;
-    if (input.isPressed('KeyS') || input.isPressed('ArrowDown')) dir.z += 1;
-    if (input.isPressed('KeyA') || input.isPressed('ArrowLeft')) dir.x -= 1;
-    if (input.isPressed('KeyD') || input.isPressed('ArrowRight')) dir.x += 1;
-    dir.normalize();
-    dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.rotation);
+  // A warm amber that deepens to burnt orange as the sun drops.
+  const sunColour =
+    warmth < 0.35 ? '#ffd9a0' : warmth < 0.7 ? '#ffb36b' : '#ff8a3d';
+  const skyHorizon =
+    warmth < 0.35 ? '#f7c873' : warmth < 0.7 ? '#ff9e57' : '#ff6b35';
+  const skyTop =
+    phase === 'night' ? '#1c1440' : warmth < 0.5 ? '#7d5aa8' : '#b44a7a';
 
-    let pace = CONFIG.PLAYER_SPEED;
-    if (input.isPressed('ShiftLeft') || input.isPressed('ShiftRight')) {
-      pace *= CONFIG.PLAYER_SPRINT_MULT;
-    }
-    this.velocity.x = dir.x * pace;
-    this.velocity.z = dir.z * pace;
+  return {
+    sunElevation: elevation,
+    warmth,
+    phase,
+    sunColour,
+    skyHorizon,
+    skyTop,
+    // Directional light strength fades as the sun sets; ambient picks up
+    // the purple of the upper sky so shadows never go black.
+    sunIntensity: 0.55 + 0.85 * elevation,
+    ambientIntensity: 0.55 + 0.25 * (1 - elevation),
+    // Sun azimuth swings from east in the morning to west at sunset.
+    sunAzimuth: ((hour - 6) / 12) * Math.PI,
+  };
+}
 
-    if (this.isGrounded) {
-      if (input.isPressed('Space')) {
-        this.velocity.y = CONFIG.JUMP_FORCE;
-        this.isGrounded = false;
-        if (audio) audio.playJump();
-      } else {
-        this.velocity.y = 0;
-      }
-    } else {
-      this.velocity.y -= CONFIG.GRAVITY * dt;
-    }
+// ---------------------------------------------------------------------------
+// Save / restore
+// ---------------------------------------------------------------------------
 
-    // Step X first, then Z; each axis only moves when the city says the
-    // landing spot is clear of buildings.
-    const probe = this.position.clone();
-    probe.x += this.velocity.x * dt;
-    if (!this.city.checkCollision(probe, 0.6)) this.position.x = probe.x;
+export function snapshot(world) {
+  return {
+    version: SAVE_VERSION,
+    day: world.day,
+    hour: world.hour,
+    minute: world.minute,
+    money: world.money,
+    respect: world.respect,
+    armour: world.armour,
+    health: world.health,
+    wanted: world.wanted,
+    totalMinutes: world.totalMinutes,
+    jobsCompleted: world.jobsCompleted,
+    bustedCount: world.bustedCount,
+    wastedCount: world.wastedCount,
+  };
+}
 
-    probe.copy(this.position);
-    probe.z += this.velocity.z * dt;
-    if (!this.city.checkCollision(probe, 0.6)) this.position.z = probe.z;
+export function restoreWorld(data) {
+  if (!data || typeof data !== 'object') return createWorld();
+  return createWorld({
+    day: data.day,
+    hour: data.hour,
+    minute: data.minute,
+    money: data.money,
+    respect: data.respect,
+    armour: data.armour,
+    health: data.health,
+    wanted: data.wanted,
+    totalMinutes: data.totalMinutes,
+    jobsCompleted: data.jobsCompleted,
+    bustedCount: data.bustedCount,
+    wastedCount: data.wastedCount,
+  });
+}
 
-    // Vertical: fall or jump, coming down on the street (y 0) or the
-    // highest rooftop close enough underfoot to stand on.
-    probe.copy(this.position);
-    probe.y += this.velocity.y * dt;
+export function applySnapshot(world, data) {
+  if (!world || !data || typeof data !== 'object') return world;
+  const restored = restoreWorld(data);
+  Object.keys(restored).forEach((key) => {
+    world[key] = restored[key];
+  });
+  return world;
+}
 
-    let roofTop = 0;
-    for (const box of this.city.colliders) {
-      const overhead =
-        probe.x >= box.min.x && probe.x <= box.max.x &&
-        probe.z >= box.min.z && probe.z <= box.max.z;
-      const landable =
-        box.max.y > roofTop &&
-        probe.y >= box.max.y - 0.5 &&
-        this.position.y >= box.max.y - 1.0;
-      if (overhead && landable) roofTop = box.max.y;
-    }
+export function serialize(world) {
+  return JSON.stringify(snapshot(world));
+}
 
-    const floor = Math.max(0, roofTop);
-    if (probe.y <= floor) {
-      this.position.y = floor;
-      this.velocity.y = 0;
-      this.isGrounded = true;
-    } else {
-      this.position.y = probe.y;
-      this.isGrounded = probe.y <= floor + 0.05;
-    }
-
-    this.playerGroup.position.copy(this.position);
-    return dir.x !== 0 || dir.z !== 0;
-  }
-
-  // Walk cycle: legs and arms swing in opposite sine waves while Rico
-  // moves on the ground; idle, the limbs ease back to neutral. A
-  // footstep sound fires now and then while he is walking.
-  _swingLimbs(dt, moving, audio) {
-    if (!this.legL || !this.legR || !this.armL || !this.armR) return;
-
-    if (this.isGrounded && moving) {
-      this.walkPhase += dt * 10;
-      const swing = Math.sin(this.walkPhase);
-      this.legL.rotation.x = swing * 0.5;
-      this.legR.rotation.x = -swing * 0.5;
-      this.armL.rotation.x = -swing * 0.4;
-      this.armR.rotation.x = swing * 0.4;
-
-      if (Math.random() < 0.15 && audio) audio.playFootstep();
-    } else {
-      this.legL.rotation.x *= 0.8;
-      this.legR.rotation.x *= 0.8;
-      this.armL.rotation.x *= 0.8;
-      this.armR.rotation.x *= 0.8;
-    }
-  }
-
-  // Third-person chase camera: behind Rico on foot, further back and
-  // higher behind the car while driving, rising a little with the pitch,
-  // always looking at a point just above his head.
-  updateCamera(camera) {
-    let distance = ON_FOOT_DIST;
-    let height = ON_FOOT_HEIGHT;
-    let heading = this.rotation;
-
-    if (this.isDriving && this.vehicles.drivenCar) {
-      distance = DRIVING_DIST;
-      height = DRIVING_HEIGHT;
-      heading = this.vehicles.drivenCar.rotation;
-    }
-
-    camera.position.set(
-      this.position.x + Math.sin(heading) * distance,
-      this.position.y + height + Math.sin(this.pitch) * 3,
-      this.position.z + Math.cos(heading) * distance
-    );
-
-    const target = this.position.clone().add(new THREE.Vector3(0, LOOK_ABOVE, 0));
-    camera.lookAt(target);
+export function deserialize(text) {
+  try {
+    return restoreWorld(JSON.parse(text));
+  } catch (error) {
+    return createWorld();
   }
 }

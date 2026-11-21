@@ -1,495 +1,574 @@
-import * as THREE from './three.js';
+// Solmar Bay — story jobs.
+//
+// The story module owns the eight-job chain Rico runs with Lena and Marco.
+// It knows nothing about rendering or input: the loop hands it the player's
+// position and the state of the world each frame, and it answers back with
+// the current objective, where the marker sits, and whether the job is done,
+// failed, or still running. Payouts land straight on the shared world state.
 
-// Solmar Bay story chain: eight jobs that take the player from a first
-// courier run to a beachfront legend. Rico drives, Lena fixes the plans
-// and Marco calls the shots — each job has its own staged goal, a timer
-// where the story needs one, and a cash payout at the end.
+import * as configModule from './config.js';
 
-const JOB_CHAIN = [
-  { num: 1, name: 'FIRST DELIVERY', stages: 1, reward: 200, intro: ['LENA', 'Rico, get that package across town before the timer runs out.'] },
-  { num: 2, name: 'PACKAGE RUN', stages: 5, reward: 300, intro: ['MARCO', 'We need those drops secured across the district, speed is key.'] },
-  { num: 3, name: 'LOSE THE HEAT', stages: 3, reward: 500, intro: ['LENA', 'The cops are on your tail, shake them and head to the safehouse.'] },
-  { num: 4, name: 'FIRST WHEELS', stages: 2, reward: 400, intro: ['MARCO', 'Swipe a ride off the street and park it in our garage.'] },
-  { num: 5, name: 'DRIVE-BY', stages: 3, reward: 600, intro: ['LENA', 'Clear out those rival drivers while cruising down the boulevard.'] },
-  { num: 6, name: 'HEAT WAVE', stages: 2, reward: 800, intro: ['LENA', 'Kick up a storm, get wanted level 3 and survive the pressure.'] },
-  { num: 7, name: 'NIGHT RUN', stages: 6, reward: 1000, intro: ['MARCO', 'Midnight run, collect all six moonlight drops before dawn.'] },
-  { num: 8, name: 'GOLDEN HOUR', stages: 2, reward: 1500, intro: ['LENA', 'Four stars? Time to make your final run for the beach and legend status.'] },
-];
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
 
-// Fixed spots on the map — where each job's target, safehouse, garage and
-// beach sit, plus the pickup points for the two collection jobs.
-const FIRST_DROP = [30, -5];
-const SAFEHOUSE_SPOT = [-40, 50];
-const GARAGE_SPOT = [60, 60];
-const BEACH_SPOT = [-200, 0];
-const RUN_DROPS = [[20, 30], [-10, 45], [35, 20], [-20, 10], [5, -30]];
-const NIGHT_DROPS = [[-50, -50], [50, 50], [-30, 60], [40, -40], [0, -70], [-70, 0]];
-const HEAT_RIVALS = [[-38, 48], [-42, 52], [-39, 55]];
-const DRIVEBY_CARS = [[25, 25], [-25, 35], [40, -30]];
-
-// Tunables: how long the opening job lasts, how long the player must ride
-// out the heat in job 6, how often the trigger can fire, and what a
-// takedown pays on top of the job reward.
-const OPENING_TIME_LIMIT = 90;
-const HEAT_SURVIVE_TIME = 30;
-const TRIGGER_COOLDOWN_MS = 500;
-const TRIGGER_REACH = 40;
-const TAKEDOWN_PAYOUT = 50;
-const RESPECT_PER_JOB = 50;
-const RIVAL_TOUGHNESS = 3;
-const RIVAL_CAR_TOUGHNESS = 2;
-const DIALOGUE_HOLD_MS = 3500;
-const DIALOGUE_GAP_MS = 3800;
-const COMPLETE_BANNER_SECS = 3.0;
-const LEGEND_BANNER_SECS = 5.0;
-const NEXT_JOB_DELAY_MS = 3000;
-
-// How close the player must get to count as arriving / picking something up.
-const ARRIVE_RADIUS = 4;
-const PICKUP_RADIUS = 3;
-const PARK_RADIUS = 5;
-
-export class MissionManager {
-  constructor(scene, world, saveManager) {
-    this.scene = scene;
-    this.world = world;
-    this.saveManager = saveManager;
-
-    // Progression: which job is live, plus the clocks and banners the HUD reads.
-    this.currentMission = 1;
-    this.missionTimer = OPENING_TIME_LIMIT;
-    this.messageTimer = 0;
-    this.messageText = '';
-    this.lastShotTime = 0;
-
-    // Per-job progress flags, reset whenever their job starts.
-    this.m3WantedAchieved = false;
-    this.m4CarStolen = false;
-    this.m6WantedAchieved = false;
-    this.m8WantedAchieved = false;
-    this.m8Escaped = false;
-
-    // Live mission props in the scene — beacons, pickups, rivals.
-    this.rivals = [];
-    this.rivalCars = [];
-    this.packages = [];
-    this.markerMesh = null;
-    this.safehouseMesh = null;
-    this.garageMesh = null;
-    this.beachMesh = null;
-
-    this.objEl = this._ensureHudLine();
-    this._ensureCrosshair();
-
-    this.initMission(1);
-  }
-
-  // ---- HUD helpers -------------------------------------------------------
-
-  _ensureHudLine() {
-    const existing = document.getElementById('mission-objective');
-    if (existing) return existing;
-    const el = document.createElement('div');
-    el.id = 'mission-objective';
-    el.style.position = 'fixed';
-    el.style.top = '10px';
-    el.style.left = '50%';
-    el.style.transform = 'translateX(-50%)';
-    el.style.background = 'rgba(0, 0, 0, 0.7)';
-    el.style.color = '#fff';
-    el.style.padding = '8px 16px';
-    el.style.fontFamily = 'monospace';
-    el.style.fontSize = '16px';
-    el.style.borderRadius = '4px';
-    el.style.zIndex = '1000';
-    document.body.appendChild(el);
-    return el;
-  }
-
-  _ensureCrosshair() {
-    if (document.getElementById('crosshair')) return;
-    const dot = document.createElement('div');
-    dot.id = 'crosshair';
-    dot.style.position = 'fixed';
-    dot.style.top = '50%';
-    dot.style.left = '50%';
-    dot.style.transform = 'translate(-50%, -50%)';
-    dot.style.width = '10px';
-    dot.style.height = '10px';
-    dot.style.border = '2px solid rgba(255,255,255,0.7)';
-    dot.style.borderRadius = '50%';
-    dot.style.zIndex = '999';
-    document.body.appendChild(dot);
-  }
-
-  // A tall glowing column marking a place the player has to reach.
-  _beacon(radius, height, color, emissive, x, z, lift) {
-    const shape = new THREE.CylinderGeometry(radius, radius, height, 16);
-    const skin = new THREE.MeshStandardMaterial({ color, emissive, roughness: 0.3 });
-    const column = new THREE.Mesh(shape, skin);
-    column.position.set(x, lift, z);
-    this.scene.add(column);
-    return column;
-  }
-
-  // One glowing pickup crate sitting on the street at (x, z).
-  _dropCrate(x, z, color, emissive) {
-    const shape = new THREE.BoxGeometry(1.5, 1.5, 1.5);
-    const skin = new THREE.MeshStandardMaterial({ color, emissive, roughness: 0.2 });
-    const crate = new THREE.Mesh(shape, skin);
-    crate.position.set(x, 0.75, z);
-    this.scene.add(crate);
-    return { mesh: crate, pos: new THREE.Vector3(x, 0, z), collected: false };
-  }
-
-  // One rival on foot guarding the safehouse approach.
-  _spawnRival(x, z) {
-    const shape = new THREE.BoxGeometry(1, 2, 1);
-    const skin = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.5 });
-    const figure = new THREE.Mesh(shape, skin);
-    figure.position.set(x, 1, z);
-    this.scene.add(figure);
-    return { mesh: figure, hp: RIVAL_TOUGHNESS };
-  }
-
-  // ---- Dialogue ----------------------------------------------------------
-
-  showDialogue(speaker, text) {
-    let box = document.getElementById('dialogue-box');
-    if (!box) {
-      box = document.createElement('div');
-      box.id = 'dialogue-box';
-      box.style.position = 'fixed';
-      box.style.bottom = '30px';
-      box.style.left = '50%';
-      box.style.transform = 'translateX(-50%)';
-      box.style.background = 'rgba(0, 0, 0, 0.85)';
-      box.style.color = '#fff';
-      box.style.padding = '12px 20px';
-      box.style.fontFamily = 'monospace';
-      box.style.fontSize = '15px';
-      box.style.borderRadius = '6px';
-      box.style.zIndex = '1001';
-      box.style.border = '1px solid #ffd700';
-      box.style.display = 'none';
-      document.body.appendChild(box);
-    }
-    box.innerHTML = `<span style="color: #ffd700; font-weight: bold;">${speaker}:</span> ${text}`;
-    box.style.display = 'block';
-
-    if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
-    this.dialogueTimer = setTimeout(() => {
-      box.style.display = 'none';
-    }, DIALOGUE_HOLD_MS);
-  }
-
-  sayLines(lines) {
-    if (!lines || lines.length === 0) return;
-    let at = 0;
-    const speakNext = () => {
-      if (at >= lines.length) return;
-      const [speaker, text] = lines[at];
-      at += 1;
-      this.showDialogue(speaker, text);
-      this.dialogueQueueTimer = setTimeout(speakNext, DIALOGUE_GAP_MS);
-    };
-    speakNext();
-  }
-
-  // ---- Mission setup -----------------------------------------------------
-
-  initMission(missionNum) {
-    this.currentMission = missionNum;
-    this.cleanupCurrentMissionVisuals();
-
-    const job = JOB_CHAIN.find((entry) => entry.num === missionNum);
-    if (job && job.intro) this.sayLines([job.intro]);
-
-    switch (missionNum) {
-      case 1: {
-        // First delivery: one beacon across town, beat the clock.
-        this.missionTimer = OPENING_TIME_LIMIT;
-        this.m1Target = new THREE.Vector3(FIRST_DROP[0], 0, FIRST_DROP[1]);
-        this.markerMesh = this._beacon(1.5, 6, 0x00ffcc, 0x0088aa, FIRST_DROP[0], FIRST_DROP[1], 3);
-        break;
-      }
-      case 2: {
-        // Package run: five amber crates scattered through the district.
-        this.missionTimer = 0;
-        this.packages = RUN_DROPS.map(([x, z]) => this._dropCrate(x, z, 0xffaa00, 0xff5500));
-        break;
-      }
-      case 3: {
-        // Lose the heat: draw the cops, shake them, then reach the safehouse
-        // while three rivals hold the street outside it.
-        this.missionTimer = 0;
-        this.m3WantedAchieved = false;
-        this.safehouseMesh = this._beacon(2, 8, 0xff00ff, 0x880088, SAFEHOUSE_SPOT[0], SAFEHOUSE_SPOT[1], 4);
-        this.rivals = HEAT_RIVALS.map(([x, z]) => this._spawnRival(x, z));
-        break;
-      }
-      case 4: {
-        // First wheels: steal any street car, then park it in the garage.
-        this.missionTimer = 0;
-        this.m4CarStolen = false;
-        this.garageMesh = this._beacon(2.5, 6, 0xffd700, 0xaa8800, GARAGE_SPOT[0], GARAGE_SPOT[1], 3);
-        break;
-      }
-      case 5: {
-        // Drive-by: three rival cars cruising the boulevard to take out.
-        this.missionTimer = 0;
-        this.rivalCars = DRIVEBY_CARS.map(([x, z]) => {
-          const car = this.world.vehicles.createCarMesh(0xff9500);
-          car.position.set(x, 0, z);
-          this.scene.add(car);
-          return { mesh: car, hp: RIVAL_CAR_TOUGHNESS };
-        });
-        break;
-      }
-      case 6: {
-        // Heat wave: push the wanted level to 3, then ride out the pressure.
-        this.missionTimer = HEAT_SURVIVE_TIME;
-        this.m6WantedAchieved = false;
-        break;
-      }
-      case 7: {
-        // Night run: six moonlight crates spread to the far corners.
-        this.missionTimer = 0;
-        this.packages = NIGHT_DROPS.map(([x, z]) => this._dropCrate(x, z, 0x00ffff, 0x005555));
-        break;
-      }
-      case 8: {
-        // Golden hour: four stars, break away clean, then run for the beach.
-        this.missionTimer = 0;
-        this.m8WantedAchieved = false;
-        this.m8Escaped = false;
-        this.beachMesh = this._beacon(3, 8, 0x00ffcc, 0x008888, BEACH_SPOT[0], BEACH_SPOT[1], 4);
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  cleanupCurrentMissionVisuals() {
-    for (const key of ['markerMesh', 'safehouseMesh', 'garageMesh', 'beachMesh']) {
-      if (this[key]) {
-        this.scene.remove(this[key]);
-        this[key] = null;
-      }
-    }
-    for (const crate of this.packages) {
-      if (crate.mesh) this.scene.remove(crate.mesh);
-    }
-    this.packages = [];
-    for (const rival of this.rivals) {
-      if (rival.mesh) this.scene.remove(rival.mesh);
-    }
-    this.rivals = [];
-    for (const car of this.rivalCars) {
-      if (car.mesh) this.scene.remove(car.mesh);
-    }
-    this.rivalCars = [];
-  }
-
-  completeMission(reward, nextMissionNum) {
-    this.world.cash += reward;
-    this.world.respect = (this.world.respect || 0) + (RESPECT_PER_JOB * this.currentMission);
-    this.saveManager.save(this.world);
-    this.messageText = `MISSION COMPLETE +$${reward}!`;
-    this.messageTimer = COMPLETE_BANNER_SECS;
-
-    if (nextMissionNum <= 8) {
-      setTimeout(() => {
-        this.initMission(nextMissionNum);
-      }, NEXT_JOB_DELAY_MS);
-    } else {
-      this.currentMission = 9;
-      this.messageText = 'SOLMAR LEGEND — ALL 8 JOBS DONE!';
-      this.messageTimer = LEGEND_BANNER_SECS;
-    }
-  }
-
-  // ---- Combat ------------------------------------------------------------
-
-  _payTakedown() {
-    this.world.cash += TAKEDOWN_PAYOUT;
-    this.saveManager.save(this.world);
-  }
-
-  // Fire at whatever is ahead: rival cars from behind the wheel in job 5,
-  // rivals on foot everywhere else. Only the nearest target roughly in
-  // front of the player, inside range, takes the hit.
-  _tryShoot(world) {
-    const facing = new THREE.Vector3(-Math.sin(world.rotation), 0, -Math.cos(world.rotation));
-    const here = world.position;
-
-    if (this.currentMission === 5 && world.isDriving) {
-      let target = null;
-      let closest = TRIGGER_REACH;
-      for (const car of this.rivalCars) {
-        const gap = here.distanceTo(car.mesh.position);
-        if (gap > closest) continue;
-        const heading = car.mesh.position.clone().sub(here).normalize();
-        if (heading.dot(facing) <= -0.5) continue;
-        closest = gap;
-        target = car;
-      }
-      if (!target) return;
-      target.hp -= 1;
-      if (target.hp > 0) return;
-      this.scene.remove(target.mesh);
-      this.rivalCars = this.rivalCars.filter((car) => car !== target);
-      this._payTakedown();
-      return;
-    }
-
-    let target = null;
-    let closest = TRIGGER_REACH;
-    for (const rival of this.rivals) {
-      const gap = here.distanceTo(rival.mesh.position);
-      if (gap > closest) continue;
-      const heading = rival.mesh.position.clone().sub(here).normalize();
-      if (heading.dot(facing) <= 0.5) continue;
-      closest = gap;
-      target = rival;
-    }
-    if (!target) return;
-    target.hp -= 1;
-    if (target.hp > 0) return;
-    this.scene.remove(target.mesh);
-    this.rivals = this.rivals.filter((rival) => rival !== target);
-    this._payTakedown();
-  }
-
-  // ---- Per-frame update --------------------------------------------------
-
-  _sweepPickups(world) {
-    for (const crate of this.packages) {
-      if (crate.collected) continue;
-      if (world.position.distanceTo(crate.mesh.position) >= PICKUP_RADIUS) continue;
-      crate.collected = true;
-      this.scene.remove(crate.mesh);
-    }
-  }
-
-  _objectiveLine(world) {
-    const cash = `Cash: $${world.cash}`;
-    switch (this.currentMission) {
-      case 1:
-        return `JOB 1/8 FIRST DELIVERY — STAGE 1/1 | Reach Marker (30,0,-5) | Time: ${Math.ceil(this.missionTimer)}s | ${cash}`;
-      case 2: {
-        const left = this.packages.filter((crate) => !crate.collected).length;
-        return `JOB 2/8 PACKAGE RUN — STAGE ${5 - left}/5 | Packages Left: ${left}/5 | ${cash}`;
-      }
-      case 3:
-        if (!this.m3WantedAchieved) return `JOB 3/8 LOSE THE HEAT — STAGE 1/3 | Get Wanted (Steal a Car) | ${cash}`;
-        if (world.wanted > 0) return `JOB 3/8 LOSE THE HEAT — STAGE 2/3 | Lose Police (Wanted: ${world.wanted}) | ${cash}`;
-        return `JOB 3/8 LOSE THE HEAT — STAGE 3/3 | Reach Safehouse (-40,0,50) | ${cash}`;
-      case 4:
-        if (!this.m4CarStolen) return `JOB 4/8 FIRST WHEELS — STAGE 1/2 | Steal a Car (Press E) | ${cash}`;
-        return `JOB 4/8 FIRST WHEELS — STAGE 2/2 | Drive to Garage (60,0,60) | ${cash}`;
-      case 5: {
-        const downed = 3 - this.rivalCars.length;
-        return `JOB 5/8 DRIVE-BY — STAGE ${downed + 1}/3 | Shoot Rival Cars (${downed}/3) | ${cash}`;
-      }
-      case 6:
-        if (!this.m6WantedAchieved) return `JOB 6/8 HEAT WAVE — STAGE 1/2 | Reach Wanted Level 3 | ${cash}`;
-        return `JOB 6/8 HEAT WAVE — STAGE 2/2 | Survive Pressure | Time: ${Math.ceil(this.missionTimer)}s | ${cash}`;
-      case 7: {
-        const left = this.packages.filter((crate) => !crate.collected).length;
-        return `JOB 7/8 NIGHT RUN — STAGE ${6 - left}/6 | Packages Left: ${left}/6 | ${cash}`;
-      }
-      case 8:
-        if (!this.m8WantedAchieved) return `JOB 8/8 GOLDEN HOUR — STAGE 1/2 | Reach Wanted 4 | ${cash}`;
-        if (!this.m8Escaped) return `JOB 8/8 GOLDEN HOUR — STAGE 1.5/2 | Escape Wanted (Wanted: ${world.wanted}) | ${cash}`;
-        return `JOB 8/8 GOLDEN HOUR — STAGE 2/2 | Reach Beach (-200,0,0) | ${cash}`;
-      default:
-        return `ALL 8 JOBS DONE — SOLMAR IS YOURS! | ${cash}`;
-    }
-  }
-
-  update(dt, world, input) {
-    if (this.messageTimer > 0) this.messageTimer -= dt;
-
-    if (input.isPressed('KeyF')) {
-      const now = Date.now();
-      if (now - this.lastShotTime > TRIGGER_COOLDOWN_MS) {
-        this.lastShotTime = now;
-        this._tryShoot(world);
-      }
-    }
-
-    switch (this.currentMission) {
-      case 1: {
-        // Opening run: the clock restarts if it runs out — the job never
-        // fails, it just gives the player another shot at the timer.
-        this.missionTimer -= dt;
-        if (this.missionTimer <= 0) this.missionTimer = OPENING_TIME_LIMIT;
-        if (world.position.distanceTo(this.m1Target) < ARRIVE_RADIUS) {
-          this.completeMission(200, 2);
-        }
-        break;
-      }
-      case 2: {
-        this._sweepPickups(world);
-        if (this.packages.every((crate) => crate.collected)) {
-          this.completeMission(300, 3);
-        }
-        break;
-      }
-      case 3: {
-        if (world.wanted >= 1) this.m3WantedAchieved = true;
-        const hideout = new THREE.Vector3(SAFEHOUSE_SPOT[0], 0, SAFEHOUSE_SPOT[1]);
-        if (this.m3WantedAchieved && world.wanted === 0 && world.position.distanceTo(hideout) < ARRIVE_RADIUS) {
-          this.completeMission(500, 4);
-        }
-        break;
-      }
-      case 4: {
-        if (world.isDriving) this.m4CarStolen = true;
-        const garage = new THREE.Vector3(GARAGE_SPOT[0], 0, GARAGE_SPOT[1]);
-        if (this.m4CarStolen && world.position.distanceTo(garage) < PARK_RADIUS) {
-          this.completeMission(400, 5);
-        }
-        break;
-      }
-      case 5: {
-        if (this.rivalCars.length === 0) this.completeMission(600, 6);
-        break;
-      }
-      case 6: {
-        if (world.wanted >= 3) this.m6WantedAchieved = true;
-        if (this.m6WantedAchieved) {
-          this.missionTimer -= dt;
-          if (this.missionTimer <= 0) this.completeMission(800, 7);
-        }
-        break;
-      }
-      case 7: {
-        this._sweepPickups(world);
-        if (this.packages.every((crate) => crate.collected)) {
-          this.completeMission(1000, 8);
-        }
-        break;
-      }
-      case 8: {
-        if (world.wanted >= 4) this.m8WantedAchieved = true;
-        if (this.m8WantedAchieved && world.wanted === 0) this.m8Escaped = true;
-        const shore = new THREE.Vector3(BEACH_SPOT[0], 0, BEACH_SPOT[1]);
-        if (this.m8Escaped && world.position.distanceTo(shore) < PARK_RADIUS) {
-          this.completeMission(1500, 9);
-        }
-        break;
-      }
-      default:
-        break;
-    }
-
-    if (this.messageTimer > 0) {
-      this.objEl.innerText = this.messageText;
-      return;
-    }
-    this.objEl.innerText = this._objectiveLine(world);
-  }
+function distance2D(a, b) {
+  if (!a || !b) return Infinity;
+  const dx = (a.x ?? 0) - (b.x ?? 0);
+  const dz = (a.z ?? 0) - (b.z ?? 0);
+  return Math.sqrt(dx * dx + dz * dz);
 }
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+// The config module exposes its tuning as a named `config` object; read
+// the mission table from there and fall back to the numbers below.
+const configValues = configModule.config ?? configModule.default ?? configModule;
+const configPayouts = Array.isArray(configValues.missions)
+  ? configValues.missions.map((job) => job.payout)
+  : null;
+const configRespect = Array.isArray(configValues.missions)
+  ? configValues.missions.map((job) => job.respect)
+  : null;
+
+// ---------------------------------------------------------------------------
+// Landmark keys
+//
+// Objectives point at a landmark by key instead of a hard-coded spot, so the
+// loop can hand in the real positions from the city once it is built. The
+// fallback coordinates below are sensible spots on the city grid and are
+// only used until the loop supplies the real ones.
+// ---------------------------------------------------------------------------
+
+const FALLBACK_LANDMARKS = {
+  safehouse: { x: -40, z: 60 },
+  garage: { x: 60, z: 40 },
+  pier: { x: -120, z: -140 },
+  beach: { x: -100, z: -120 },
+  market: { x: 20, z: -60 },
+  docks: { x: 120, z: -120 },
+  plaza: { x: 0, z: 0 },
+  northGate: { x: 0, z: -160 },
+  marina: { x: -140, z: -60 },
+  hotel: { x: 80, z: -80 },
+};
+
+// ---------------------------------------------------------------------------
+// The eight jobs
+//
+// Each job: a title, a short briefing in the crew's own voices, an ordered
+// list of objectives, and what it pays. Objective kinds:
+//   drive   — reach the marker
+//   pickup  — reach the marker and take the package
+//   shoot   — take down the given number of targets
+//   escape  — lose the police (or reach the hideout marker)
+//   deliver — reach the drop-off marker
+// ---------------------------------------------------------------------------
+
+function buildJobs() {
+  const payouts = configPayouts;
+  const respect = configRespect;
+
+  const pay = (index, fallback) => (Array.isArray(payouts) ? (payouts[index] ?? fallback) : fallback);
+  const rep = (index, fallback) => (Array.isArray(respect) ? (respect[index] ?? fallback) : fallback);
+
+  return [
+    {
+      id: 'first-delivery',
+      title: 'The First Drop',
+      theme: 'a first delivery',
+      briefing: [
+        { speaker: 'Lena', line: 'Rico. One package, one drop. Easy money if you keep it simple.' },
+        { speaker: 'Rico', line: 'Simple is my middle name. Where is it?' },
+        { speaker: 'Marco', line: 'Pier end, under the lamp. Take it to the market. No detours.' },
+        { speaker: 'Lena', line: 'And Rico? Do not stop for anyone.' },
+      ],
+      objectives: [
+        { id: 'go-pier', kind: 'drive', text: 'Drive to the pier', markerKey: 'pier', radius: 7 },
+        { id: 'take-package', kind: 'pickup', text: 'Pick up the package', markerKey: 'pier', radius: 4 },
+        { id: 'drop-market', kind: 'deliver', text: 'Deliver the package to the market', markerKey: 'market', radius: 7 },
+      ],
+      payout: pay(0, 450),
+      respect: rep(0, 10),
+    },
+    {
+      id: 'watched-pickup',
+      title: 'Eyes on the Street',
+      theme: 'a pickup under watch',
+      briefing: [
+        { speaker: 'Marco', line: 'Somebody is watching the docks. So we move quiet and fast.' },
+        { speaker: 'Rico', line: 'Watched by who?' },
+        { speaker: 'Lena', line: 'Does it matter? Grab the case, do not wave at anyone.' },
+        { speaker: 'Marco', line: 'If they get close, make them regret it. Then bring it home.' },
+      ],
+      objectives: [
+        { id: 'go-docks', kind: 'drive', text: 'Drive to the docks', markerKey: 'docks', radius: 7 },
+        { id: 'take-case', kind: 'pickup', text: 'Pick up the case', markerKey: 'docks', radius: 4 },
+        { id: 'clear-watchers', kind: 'shoot', text: 'Deal with the watchers', count: 3, radius: 0 },
+        { id: 'drop-safehouse', kind: 'deliver', text: 'Deliver the case to the safehouse', markerKey: 'safehouse', radius: 7 },
+      ],
+      payout: pay(1, 700),
+      respect: rep(1, 14),
+    },
+    {
+      id: 'the-chase',
+      title: 'Tailspin',
+      theme: 'a chase',
+      briefing: [
+        { speaker: 'Lena', line: 'A courier took our money and ran. He is in a grey coupe, north side.' },
+        { speaker: 'Rico', line: 'I can catch anything with four wheels.' },
+        { speaker: 'Marco', line: 'Catch him, stop him, get the bag. Try not to total the car.' },
+        { speaker: 'Lena', line: 'Try. That is the whole plan.' },
+      ],
+      objectives: [
+        { id: 'chase-courier', kind: 'drive', text: 'Chase the courier to the north gate', markerKey: 'northGate', radius: 9 },
+        { id: 'stop-courier', kind: 'shoot', text: 'Stop the courier', count: 1, radius: 0 },
+        { id: 'take-bag', kind: 'pickup', text: 'Pick up the money bag', markerKey: 'northGate', radius: 5 },
+        { id: 'drop-plaza', kind: 'deliver', text: 'Bring the bag to the plaza', markerKey: 'plaza', radius: 7 },
+      ],
+      payout: pay(2, 950),
+      respect: rep(2, 16),
+    },
+    {
+      id: 'protection-run',
+      title: 'Cover for Lena',
+      theme: 'a protection run',
+      briefing: [
+        { speaker: 'Lena', line: 'I have a meet at the hotel. I need you watching my back, not my phone.' },
+        { speaker: 'Rico', line: 'Nobody touches you while I am on the roof across the street.' },
+        { speaker: 'Marco', line: 'If guns come out, they come out for them, not for her. Keep her safe.' },
+        { speaker: 'Lena', line: 'And afterwards we drive out together. Slow. Calm. Like tourists.' },
+      ],
+      objectives: [
+        { id: 'go-hotel', kind: 'drive', text: 'Drive Lena to the hotel', markerKey: 'hotel', radius: 7 },
+        { id: 'cover-meet', kind: 'shoot', text: 'Cover the meet — stop the ambush', count: 4, radius: 0 },
+        { id: 'escort-out', kind: 'deliver', text: 'Escort Lena back to the safehouse', markerKey: 'safehouse', radius: 7 },
+      ],
+      payout: pay(3, 1200),
+      respect: rep(3, 20),
+    },
+    {
+      id: 'high-speed-escape',
+      title: 'Burning Rubber',
+      theme: 'a high-speed escape',
+      briefing: [
+        { speaker: 'Marco', line: 'The job went loud. Cops everywhere. You have the goods, now vanish.' },
+        { speaker: 'Rico', line: 'Vanishing is the fun part.' },
+        { speaker: 'Lena', line: 'Lose them first. Then bring the goods to the garage. Not before.' },
+        { speaker: 'Marco', line: 'If you lead them to the garage, I will bill you for the door.' },
+      ],
+      objectives: [
+        { id: 'grab-goods', kind: 'pickup', text: 'Grab the goods at the marina', markerKey: 'marina', radius: 5 },
+        { id: 'lose-cops', kind: 'escape', text: 'Lose the police', markerKey: 'safehouse', radius: 8 },
+        { id: 'drop-garage', kind: 'deliver', text: 'Deliver the goods to the garage', markerKey: 'garage', radius: 7 },
+      ],
+      payout: pay(4, 1600),
+      respect: rep(4, 24),
+    },
+    {
+      id: 'night-job',
+      title: 'Midnight Cargo',
+      theme: 'a night job',
+      briefing: [
+        { speaker: 'Lena', line: 'Midnight. Beach side. A boat, a crate, no lights, no questions.' },
+        { speaker: 'Rico', line: 'I like the sound of no questions.' },
+        { speaker: 'Marco', line: 'The beach is quiet at night. Keep it that way. One crate, one drop.' },
+        { speaker: 'Lena', line: 'If anyone follows you off the sand, lose them before the plaza.' },
+      ],
+      objectives: [
+        { id: 'go-beach', kind: 'drive', text: 'Drive to the beach at night', markerKey: 'beach', radius: 7 },
+        { id: 'take-crate', kind: 'pickup', text: 'Pick up the crate', markerKey: 'beach', radius: 4 },
+        { id: 'drop-plaza-night', kind: 'deliver', text: 'Deliver the crate to the plaza', markerKey: 'plaza', radius: 7 },
+      ],
+      payout: pay(5, 1400),
+      respect: rep(5, 22),
+    },
+    {
+      id: 'garage-favour',
+      title: 'A Favour for Customs',
+      theme: 'a garage favour',
+      briefing: [
+        { speaker: 'Marco', line: 'The garage needs a part. A rare one. It is sitting at the docks.' },
+        { speaker: 'Rico', line: 'So I am a delivery boy for your shop now?' },
+        { speaker: 'Marco', line: 'You are a delivery boy with a fast car. Bring the part, I tune the car.' },
+        { speaker: 'Lena', line: 'And do not scratch it. He cries about scratches.' },
+      ],
+      objectives: [
+        { id: 'go-docks-part', kind: 'drive', text: 'Drive to the docks for the part', markerKey: 'docks', radius: 7 },
+        { id: 'take-part', kind: 'pickup', text: 'Pick up the part', markerKey: 'docks', radius: 4 },
+        { id: 'drop-garage-part', kind: 'deliver', text: 'Deliver the part to the garage', markerKey: 'garage', radius: 7 },
+      ],
+      payout: pay(6, 900),
+      respect: rep(6, 18),
+    },
+    {
+      id: 'big-score',
+      title: 'The Big Score',
+      theme: 'a final big score',
+      briefing: [
+        { speaker: 'Lena', line: 'This is the one. The marina vault, one night, everything we are owed.' },
+        { speaker: 'Marco', line: 'We grab it, we hold the pier, we run. No heroes, no last stands.' },
+        { speaker: 'Rico', line: 'Then we are done running small jobs. Say it again so I believe it.' },
+        { speaker: 'Lena', line: 'One last job, Rico. Make it count.' },
+      ],
+      objectives: [
+        { id: 'go-marina', kind: 'drive', text: 'Drive to the marina', markerKey: 'marina', radius: 8 },
+        { id: 'take-vault', kind: 'pickup', text: 'Take the vault case', markerKey: 'marina', radius: 5 },
+        { id: 'hold-pier', kind: 'shoot', text: 'Hold the pier — stop the guards', count: 6, radius: 0 },
+        { id: 'lose-cops-final', kind: 'escape', text: 'Escape the police', markerKey: 'safehouse', radius: 8 },
+        { id: 'drop-safehouse-final', kind: 'deliver', text: 'Deliver the score to the safehouse', markerKey: 'safehouse', radius: 7 },
+      ],
+      payout: pay(7, 5000),
+      respect: rep(7, 40),
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Reading the shared world state
+//
+// The loop owns the state object. These helpers tolerate the state carrying
+// its numbers directly (state.money) or nested under a world object, so a
+// small shape change upstream does not break payouts.
+// ---------------------------------------------------------------------------
+
+function readNumber(state, keys) {
+  if (!state) return 0;
+  for (const key of keys) {
+    const value = state[key];
+    if (typeof value === 'number') return value;
+  }
+  const nested = state.world ?? state.game ?? null;
+  if (nested) {
+    for (const key of keys) {
+      const value = nested[key];
+      if (typeof value === 'number') return value;
+    }
+  }
+  return 0;
+}
+
+function addToState(state, keys, amount) {
+  if (!state || !amount) return;
+  for (const key of keys) {
+    if (typeof state[key] === 'number') {
+      state[key] += amount;
+      return;
+    }
+  }
+  const nested = state.world ?? state.game ?? null;
+  if (nested) {
+    for (const key of keys) {
+      if (typeof nested[key] === 'number') {
+        nested[key] += amount;
+        return;
+      }
+    }
+  }
+  // Nothing held the number yet: plant it on the state itself.
+  state[keys[0]] = (typeof state[keys[0]] === 'number' ? state[keys[0]] : 0) + amount;
+}
+
+function readPlayerPosition(state, context) {
+  const fromContext = context?.playerPosition ?? context?.playerPos ?? context?.position ?? null;
+  if (fromContext) return fromContext;
+  const player = state?.player ?? null;
+  if (!player) return null;
+  return player.position ?? player.pos ?? player ?? null;
+}
+
+function readWanted(state, context) {
+  if (typeof context?.wanted === 'number') return context.wanted;
+  if (typeof context?.wantedLevel === 'number') return context.wantedLevel;
+  return readNumber(state, ['wantedLevel', 'wanted', 'stars']);
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+export function createMissions(state) {
+  const jobs = buildJobs();
+  const landmarks = { ...FALLBACK_LANDMARKS };
+
+  let jobIndex = -1; // -1 means no job started yet
+  let objectiveIndex = 0;
+  let status = 'idle'; // idle | active | complete | failed | done
+  let failReason = null;
+  let targetsDown = 0;
+  let paidJobId = null;
+
+  function currentJob() {
+    if (jobIndex < 0 || jobIndex >= jobs.length) return null;
+    return jobs[jobIndex];
+  }
+
+  function currentObjective() {
+    const job = currentJob();
+    if (!job) return null;
+    return job.objectives[objectiveIndex] ?? null;
+  }
+
+  function resolveMarker(objective, context) {
+    if (!objective) return null;
+    const supplied = context?.markers ?? context?.landmarks ?? null;
+    if (objective.markerKey && supplied && supplied[objective.markerKey]) {
+      return supplied[objective.markerKey];
+    }
+    if (objective.markerKey && landmarks[objective.markerKey]) {
+      return landmarks[objective.markerKey];
+    }
+    if (objective.position) return objective.position;
+    if (objective.kind === 'pickup') {
+      return context?.packagePosition ?? context?.pickupPosition ?? null;
+    }
+    if (objective.kind === 'deliver') {
+      return context?.dropOffPosition ?? context?.deliveryPosition ?? null;
+    }
+    if (objective.kind === 'drive') {
+      return context?.markerPosition ?? null;
+    }
+    return null;
+  }
+
+  function objectiveDone(objective, context) {
+    if (!objective) return false;
+    const playerPosition = readPlayerPosition(state, context);
+
+    if (objective.kind === 'shoot') {
+      const remaining = context?.targetsRemaining ?? context?.targetsLeft ?? null;
+      if (typeof remaining === 'number') return remaining <= 0;
+      const destroyed = context?.targetsDestroyed ?? context?.targetsDown ?? targetsDown;
+      return destroyed >= (objective.count ?? 1);
+    }
+
+    if (objective.kind === 'escape') {
+      if (readWanted(state, context) <= 0) return true;
+      // Reaching the hideout marker also shakes the tail.
+      const marker = resolveMarker(objective, context);
+      if (marker && playerPosition) {
+        return distance2D(playerPosition, marker) <= (objective.radius ?? 8);
+      }
+      return false;
+    }
+
+    // drive / pickup / deliver all resolve by reaching the marker.
+    const marker = resolveMarker(objective, context);
+    if (!marker || !playerPosition) return false;
+    return distance2D(playerPosition, marker) <= (objective.radius ?? 7);
+  }
+
+  function payOut(job) {
+    if (!job || paidJobId === job.id) return false;
+    paidJobId = job.id;
+    addToState(state, ['money', 'cash', 'funds'], job.payout);
+    addToState(state, ['respect'], job.respect);
+    return true;
+  }
+
+  function fail(reason) {
+    if (status !== 'active') return status;
+    status = 'failed';
+    failReason = reason;
+    return status;
+  }
+
+  const module = {
+    jobs,
+
+    getJobs() {
+      return jobs;
+    },
+
+    getJobCount() {
+      return jobs.length;
+    },
+
+    getCurrentJob() {
+      return currentJob();
+    },
+
+    getJobIndex() {
+      return jobIndex;
+    },
+
+    getStatus() {
+      return status;
+    },
+
+    isActive() {
+      return status === 'active';
+    },
+
+    isComplete() {
+      return status === 'complete' || status === 'done';
+    },
+
+    isFailed() {
+      return status === 'failed';
+    },
+
+    getFailReason() {
+      return failReason;
+    },
+
+    getBriefing(job) {
+      const target = job ?? currentJob();
+      return target ? target.briefing : [];
+    },
+
+    // Hand the loop the real city landmark positions (safehouse, garage,
+    // pier, docks, market, plaza, beach, marina, hotel, northGate).
+    setLandmarks(next) {
+      if (!next) return;
+      for (const key of Object.keys(next)) {
+        if (next[key] && typeof next[key].x === 'number') landmarks[key] = next[key];
+      }
+    },
+
+    setMarkers(next) {
+      module.setLandmarks(next);
+    },
+
+    startJob(index) {
+      const target = typeof index === 'number' ? index : jobIndex + 1;
+      if (target < 0 || target >= jobs.length) return null;
+      jobIndex = target;
+      objectiveIndex = 0;
+      status = 'active';
+      failReason = null;
+      targetsDown = 0;
+      paidJobId = null;
+      return currentJob();
+    },
+
+    startNextJob() {
+      if (jobIndex + 1 >= jobs.length) {
+        status = 'done';
+        return null;
+      }
+      return module.startJob(jobIndex + 1);
+    },
+
+    // One frame of story logic. `context` is whatever the loop knows about
+    // the world this frame: player position, remaining targets, package and
+    // drop-off positions, wanted level, busted/wasted flags. Returns the
+    // current status string.
+    update(dt, context) {
+      if (status !== 'active') return status;
+      const job = currentJob();
+      if (!job) return status;
+
+      // Fail conditions first: busted, wasted, or the thing we were
+      // protecting was destroyed.
+      const busted = context?.busted ?? state?.busted ?? false;
+      const wasted = context?.wasted ?? state?.wasted ?? false;
+      const targetDestroyed = context?.targetDestroyed ?? context?.protectedTargetDestroyed ?? false;
+      if (busted) return fail('busted');
+      if (wasted) return fail('wasted');
+      if (targetDestroyed) return fail('target-destroyed');
+
+      if (typeof context?.targetsDestroyed === 'number') {
+        targetsDown = context.targetsDestroyed;
+      }
+      if (typeof context?.targetsDown === 'number') {
+        targetsDown = context.targetsDown;
+      }
+
+      const objective = currentObjective();
+      if (!objective) {
+        status = 'complete';
+        payOut(job);
+        return status;
+      }
+
+      if (objectiveDone(objective, context)) {
+        objectiveIndex += 1;
+        if (objectiveIndex >= job.objectives.length) {
+          status = 'complete';
+          payOut(job);
+        }
+      }
+      return status;
+    },
+
+    getCurrentObjective() {
+      return currentObjective();
+    },
+
+    // Text for the job tracker in the top-left of the HUD.
+    getObjectiveText() {
+      const job = currentJob();
+      const objective = currentObjective();
+      if (!job || !objective) {
+        if (status === 'done') return 'Story complete — Solmar Bay is yours.';
+        if (status === 'complete') return 'Job complete.';
+        return 'No active job — start the next job.';
+      }
+      return `${job.title}: ${objective.text}`;
+    },
+
+    // Where the tracker arrow should point this frame. The loop may pass
+    // the same context it passes to update() so live markers win.
+    getMarkerPosition(context) {
+      const objective = currentObjective();
+      if (!objective) return null;
+      if (objective.kind === 'shoot') return null;
+      return resolveMarker(objective, context);
+    },
+
+    // Distance in metres from the player to the current marker, for the HUD.
+    getMarkerDistance(context) {
+      const marker = module.getMarkerPosition(context);
+      const playerPosition = readPlayerPosition(state, context);
+      if (!marker || !playerPosition) return null;
+      return distance2D(playerPosition, marker);
+    },
+
+    getProgress() {
+      const job = currentJob();
+      if (!job) return { job: jobIndex + 1, totalJobs: jobs.length, objective: 0, totalObjectives: 0 };
+      return {
+        job: jobIndex + 1,
+        totalJobs: jobs.length,
+        objective: Math.min(objectiveIndex + 1, job.objectives.length),
+        totalObjectives: job.objectives.length,
+      };
+    },
+
+    // Pay out the current job's reward (also done automatically when the
+    // last objective completes). Returns true when money actually moved.
+    payOutCurrentJob() {
+      const job = currentJob();
+      return payOut(job);
+    },
+
+    completeCurrentJob() {
+      const job = currentJob();
+      if (!job || status !== 'active') return false;
+      status = 'complete';
+      objectiveIndex = job.objectives.length;
+      payOut(job);
+      return true;
+    },
+
+    failCurrentJob(reason) {
+      return fail(reason ?? 'failed');
+    },
+
+    reset() {
+      jobIndex = -1;
+      objectiveIndex = 0;
+      status = 'idle';
+      failReason = null;
+      targetsDown = 0;
+      paidJobId = null;
+    },
+  };
+
+  return module;
+}
+
+export default createMissions;

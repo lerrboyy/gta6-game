@@ -1,76 +1,123 @@
-// Save and load for Solmar Bay, persisted in localStorage under one key.
-// The saved shape is flat: the player's position, money, health, wanted
-// level, weapons, armour, respect, the in-game day and clock, the current
-// mission, and the garage — plus a timestamp so the menu can show when
-// the save was made.
-import { CONFIG } from './config.js';
+// Save and load for Solmar Bay, backed by localStorage.
+//
+// This module knows nothing about the game itself: it works with a plain
+// snapshot object that the world module produces and restores from, so
+// there is no circular import between the save layer and the world layer.
+// The loop module is the go-between — it hands a snapshot in when saving
+// and applies the loaded snapshot when continuing.
+//
+// A snapshot carries: money, respect, day, clock (hour and minute),
+// owned car upgrades, and the list of completed jobs. Anything missing
+// from a snapshot is filled with a sensible default on load, so an older
+// or partial save never crashes the game. Storage failures (private
+// browsing, a full quota, a blocked origin) are swallowed silently:
+// saving simply does nothing and loading reports no save.
 
-export class SaveManager {
-  constructor() {
-    this.defaultData = {
-      x: 0,
-      y: 1,
-      z: 0,
-      cash: 500,
-      health: 100,
-      wanted: 0,
-      weaponSlot: 1,
-      ownedWeapons: [0, 1],
-      armor: 0,
-      respect: 0,
-      day: 1,
-      clockMinutes: 571,
-      mission: 1,
-      garage: null,
-    };
+const SAVE_KEY = 'solmar-bay-save-v1';
+
+// The shape of a fresh save, used both as the default for missing fields
+// and as the starting point for a brand-new game.
+function defaultSnapshot() {
+  return {
+    money: 0,
+    respect: 0,
+    day: 1,
+    clockHour: 9,
+    clockMinute: 0,
+    upgrades: {
+      engine: false,
+      armour: false,
+      nitro: false,
+      respray: null,
+    },
+    completedJobs: [],
+  };
+}
+
+// Merge a raw loaded object over the defaults, field by field, so a save
+// that is missing a key (or was written by an older build) still loads
+// cleanly. Types are checked loosely: a wrong-typed value falls back to
+// its default rather than being trusted.
+function normaliseSnapshot(raw) {
+  const fresh = defaultSnapshot();
+  if (!raw || typeof raw !== 'object') return fresh;
+
+  if (typeof raw.money === 'number' && Number.isFinite(raw.money)) {
+    fresh.money = Math.max(0, Math.floor(raw.money));
   }
-
-  save(playerData) {
-    try {
-      // The world object carries its position as a Vector3, so read the
-      // coordinates from .position when it is there and fall back to flat
-      // x/y/z fields (and finally to the fresh-game defaults).
-      const data = {
-        x: playerData.position?.x ?? playerData.x ?? 0,
-        y: playerData.position?.y ?? playerData.y ?? 1,
-        z: playerData.position?.z ?? playerData.z ?? 0,
-        cash: playerData.cash ?? 500,
-        health: playerData.health ?? 100,
-        wanted: playerData.wanted ?? 0,
-        weaponSlot: playerData.weaponSlot ?? 1,
-        ownedWeapons: playerData.ownedWeapons ?? [0, 1],
-        armor: playerData.armor ?? 0,
-        respect: playerData.respect ?? 0,
-        day: playerData.day ?? 1,
-        clockMinutes: playerData.clockMinutes ?? 571,
-        mission: playerData.mission ?? 1,
-        garage: playerData.garage ?? null,
-        timestamp: Date.now(),
-      };
-      localStorage.setItem(CONFIG.SAVE_KEY, JSON.stringify(data));
-      return true;
-    } catch (e) {
-      console.warn('Failed to save game:', e);
-      return false;
-    }
+  if (typeof raw.respect === 'number' && Number.isFinite(raw.respect)) {
+    fresh.respect = Math.max(0, Math.floor(raw.respect));
   }
-
-  load() {
-    try {
-      const raw = localStorage.getItem(CONFIG.SAVE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (e) {
-      console.warn('Failed to load game:', e);
-      return null;
-    }
+  if (typeof raw.day === 'number' && Number.isFinite(raw.day)) {
+    fresh.day = Math.max(1, Math.floor(raw.day));
   }
+  if (typeof raw.clockHour === 'number' && Number.isFinite(raw.clockHour)) {
+    fresh.clockHour = Math.min(23, Math.max(0, Math.floor(raw.clockHour)));
+  }
+  if (typeof raw.clockMinute === 'number' && Number.isFinite(raw.clockMinute)) {
+    fresh.clockMinute = Math.min(59, Math.max(0, Math.floor(raw.clockMinute)));
+  }
+  if (raw.upgrades && typeof raw.upgrades === 'object') {
+    fresh.upgrades.engine = raw.upgrades.engine === true;
+    fresh.upgrades.armour = raw.upgrades.armour === true;
+    fresh.upgrades.nitro = raw.upgrades.nitro === true;
+    fresh.upgrades.respray =
+      typeof raw.upgrades.respray === 'string' ? raw.upgrades.respray : null;
+  }
+  if (Array.isArray(raw.completedJobs)) {
+    fresh.completedJobs = raw.completedJobs.filter((job) => typeof job === 'string');
+  }
+  return fresh;
+}
 
-  hasSave() {
+// Persist a snapshot. Returns true when the save landed, false when
+// storage was unavailable. Only the known fields are written, so extra
+// properties on the caller's object never leak into the save.
+export function saveProgress(snapshot) {
+  const clean = normaliseSnapshot(snapshot);
+  try {
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(clean));
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// Load the saved snapshot, or null when there is no save or it cannot be
+// read. A corrupt entry is treated as no save at all (and removed, so it
+// does not keep failing on every load).
+export function loadProgress() {
+  let rawText = null;
+  try {
+    rawText = window.localStorage.getItem(SAVE_KEY);
+  } catch (error) {
+    return null;
+  }
+  if (rawText === null) return null;
+  try {
+    return normaliseSnapshot(JSON.parse(rawText));
+  } catch (error) {
     try {
-      return !!localStorage.getItem(CONFIG.SAVE_KEY);
-    } catch {
-      return false;
+      window.localStorage.removeItem(SAVE_KEY);
+    } catch (ignored) {
+      // Nothing more to do if the corrupt entry cannot be removed either.
     }
+    return null;
+  }
+}
+
+// True when a readable save exists. A corrupt entry counts as no save.
+export function hasSave() {
+  return loadProgress() !== null;
+}
+
+// Remove the save entirely. Returns true when the entry is gone (or was
+// never there), false only when storage itself is unavailable.
+export function clearSave() {
+  try {
+    window.localStorage.removeItem(SAVE_KEY);
+    return true;
+  } catch (error) {
+    return false;
   }
 }

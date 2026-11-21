@@ -1,345 +1,200 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SOLMAR BAY</title>
+<title>Solmar Bay — a GTA-style open world</title>
 <style>
-  /* Palette and page frame: a full-screen black canvas with white text. */
-  :root {
-    --gold: #ffd700;
-    --blue: #0077be;
-    --sand: #f4a460;
-    --glass: rgba(0, 0, 0, 0.6);
-  }
-  html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    overflow: hidden;
-    background: #000;
-    color: white;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  }
-  #game-canvas {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a0f2e; }
+  body { font-family: "Trebuchet MS", Verdana, sans-serif; color: #fff; }
+
+  /* The 3D view fills the window; the HUD canvas sits exactly on top. */
+  #game, #hud {
     position: fixed;
     inset: 0;
-    display: block;
     width: 100%;
     height: 100%;
+    display: block;
   }
-  .hidden { display: none !important; }
+  #game { z-index: 0; }
+  #hud { z-index: 1; pointer-events: none; }
 
-  /* Full-screen menu screens (start, pause, garage) sit above the game. */
-  .overlay {
+  /* Every menu is a full-screen layer above both canvases. */
+  .screen {
     position: fixed;
     inset: 0;
-    z-index: 10;
+    z-index: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: var(--glass);
-    backdrop-filter: blur(5px);
-  }
-  .menu-box {
-    max-width: 600px;
-    padding: 40px;
+    gap: 18px;
     text-align: center;
-    background: rgba(0,0,0,0.8);
-    border: 4px solid var(--gold);
-    border-radius: 10px;
+    padding: 24px;
+    background: rgba(20, 8, 38, 0.72);
   }
-  h1 {
-    margin: 0 0 10px 0;
-    font-size: 64px;
-    letter-spacing: 5px;
-    color: var(--gold);
-    text-shadow: 4px 4px 0 #000;
-  }
-  p.intro {
+  .screen[hidden] { display: none; }
+
+  .logo {
+    font-size: clamp(56px, 11vw, 120px);
+    font-weight: 900;
     font-style: italic;
-    color: #ccc;
-    margin-bottom: 30px;
+    letter-spacing: 4px;
+    line-height: 0.95;
+    color: #ffd166;
+    text-shadow:
+      0 4px 0 #ff5e78,
+      0 8px 24px rgba(0, 0, 0, 0.8);
   }
+  .tagline {
+    font-size: clamp(15px, 2.4vw, 21px);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #7df9ff;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+  }
+  .panel {
+    background: rgba(10, 4, 24, 0.82);
+    border: 2px solid rgba(255, 209, 102, 0.55);
+    border-radius: 12px;
+    padding: 20px 26px;
+    max-width: 560px;
+    width: 100%;
+  }
+  .panel h2 {
+    font-size: 26px;
+    letter-spacing: 2px;
+    color: #ffd166;
+    margin-bottom: 10px;
+  }
+  .panel p { font-size: 16px; line-height: 1.55; color: #f2e9ff; }
+  .panel .payout { margin-top: 10px; color: #7df9ff; font-weight: bold; }
 
-  /* Buttons: gold for the main action, pale for the secondary one. */
-  .btn {
-    margin: 10px;
-    padding: 15px 40px;
-    font-size: 20px;
-    font-weight: bold;
-    color: black;
-    background: var(--gold);
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: transform 0.2s;
-  }
-  .btn:hover { transform: scale(1.05); }
-  .btn:active { transform: scale(0.95); }
-  .btn.secondary { background: #eee; }
-  .gbtn {
+  .menu-btn {
     display: block;
-    width: 100%;
-    margin: 8px 0;
-    padding: 10px 20px;
-    font-size: 16px;
+    width: min(320px, 86vw);
+    padding: 13px 20px;
+    font-family: inherit;
+    font-size: 19px;
     font-weight: bold;
-    color: black;
-    background: var(--gold);
+    letter-spacing: 2px;
+    color: #1a0f2e;
+    background: #ffd166;
     border: none;
-    border-radius: 5px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: transform 0.2s;
   }
-  .gbtn:hover { transform: scale(1.02); }
-  .gbtn:active { transform: scale(0.98); }
-  .gbtn.secondary { background: #eee; }
+  .menu-btn:hover, .menu-btn:focus-visible { background: #ffe08a; outline: 3px solid #7df9ff; }
+  .menu-btn.secondary { background: transparent; color: #ffd166; border: 2px solid #ffd166; }
+  .menu-btn.secondary:hover, .menu-btn.secondary:focus-visible { background: rgba(255, 209, 102, 0.15); }
+  .menu-btn:disabled { opacity: 0.45; cursor: default; }
 
-  /* Key hints and keyboard chips. */
-  .controls-hint {
-    font-size: 14px;
-    color: #aaa;
-    margin-top: 20px;
-  }
-  kbd {
-    padding: 2px 6px;
-    background: #333;
-    border: 1px solid #555;
-    border-radius: 3px;
-  }
+  .controls { list-style: none; text-align: left; font-size: 15px; line-height: 1.9; color: #e8dcff; }
+  .controls b { color: #ffd166; display: inline-block; min-width: 118px; }
+  .hint { font-size: 13px; color: #b9a8d9; letter-spacing: 1px; }
 
-  /* HUD: a transparent layer over the whole screen, split top / bottom. */
-  #hud {
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: 5;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    width: 100%;
-    height: 100%;
-    padding: 20px;
-    pointer-events: none;
-  }
-  .hud-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-  }
-  .hud-bottom {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-  }
-
-  /* Health, armour and respect meters. */
-  .stat-bar {
-    position: relative;
-    width: 200px;
-    height: 20px;
-    margin-bottom: 5px;
-    background: #333;
-    border: 2px solid white;
-  }
-  #health-fill {
-    width: 100%;
-    height: 100%;
-    background: #ff3b30;
-    transition: width 0.3s;
-  }
-  #armor-bar { margin-bottom: 5px; }
-  #armor-fill {
-    width: 0%;
-    height: 100%;
-    background: #2185d0;
-    transition: width 0.3s;
-  }
-  #respect-bar { margin-top: 10px; }
-  #respect-fill {
-    width: 0%;
-    height: 100%;
-    background: #a333c8;
-    transition: width 0.3s;
-  }
-  #respect-label {
-    margin-top: 2px;
-    font-size: 12px;
-    font-weight: bold;
-    color: var(--gold);
-  }
-
-  /* Cash, speed, wanted stars, radio and clock readouts. */
-  #cash-display {
-    font-size: 24px;
-    font-weight: bold;
-    color: #4cd964;
-    text-shadow: 2px 2px 0 #000;
-  }
-  #speed-display {
-    margin-top: 5px;
-    font-size: 22px;
-    font-weight: bold;
-    color: var(--gold);
-    text-shadow: 2px 2px 0 #000;
-  }
-  #wanted-stars {
-    font-size: 24px;
-    color: var(--gold);
-    text-shadow: 2px 2px 0 #000;
-  }
-  #radio-display {
-    margin-top: 5px;
-    font-family: monospace;
-    font-size: 14px;
-    color: var(--gold);
-  }
-  #clock-display {
-    margin-top: 2px;
-    font-family: monospace;
-    font-size: 18px;
-    font-weight: bold;
-    color: white;
-  }
-
-  /* Round minimap, bottom-left. */
-  #minimap-container {
-    position: relative;
-    width: 150px;
-    height: 150px;
+  /* A live region for screen readers: announcements only, never seen. */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; border: 0;
     overflow: hidden;
-    background: rgba(0,0,0,0.5);
-    border: 2px solid white;
-    border-radius: 50%;
-  }
-  #minimap { width: 100%; height: 100%; }
-
-  /* Weapon slots, centred along the bottom edge. */
-  #weapon-slots {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 6px;
-    pointer-events: none;
-  }
-  .wslot {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    font-size: 10px;
-    font-weight: bold;
-    line-height: 1.1;
-    text-align: center;
-    color: white;
-    background: var(--glass);
-    border: 2px solid var(--gold);
-  }
-  .wslot.active { background: var(--gold); color: black; }
-  .wslot.locked { opacity: 0.5; border-color: #888; }
-
-  /* Police dispatch feed, docked to the middle of the right edge. */
-  #dispatch-panel {
-    position: fixed;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 5;
-    width: 220px;
-    padding: 15px;
-    font-family: monospace;
-    font-size: 12px;
-    color: white;
-    background: var(--glass);
-    border-left: 4px solid var(--gold);
-    pointer-events: none;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 </style>
 </head>
 <body>
-<canvas id="game-canvas"></canvas>
 
-<div id="hud" class="hidden">
-  <div class="hud-top">
-    <div class="stats">
-      <div class="stat-bar"><div id="health-fill"></div></div>
-      <div class="stat-bar" id="armor-bar"><div id="armor-fill"></div></div>
-      <div id="cash-display">$0</div>
-      <div class="stat-bar" id="respect-bar"><div id="respect-fill"></div></div>
-      <div id="respect-label">NEW IN TOWN</div>
-      <div id="speed-display" class="hidden">0 MPH</div>
-    </div>
-    <div style="text-align: right;">
-      <div id="wanted-stars"></div>
-      <div id="radio-display">SOLMAR FM 98.6</div>
-      <div id="clock-display">DAY 1 09:31</div>
-    </div>
-  </div>
-  <div class="hud-bottom">
-    <div id="minimap-container">
-      <canvas id="minimap"></canvas>
-    </div>
-    <div id="weapon-slots">
-      <div class="wslot" id="wslot-0">1 FISTS</div>
-      <div class="wslot" id="wslot-1">2 .38</div>
-      <div class="wslot locked" id="wslot-2">3 SMG</div>
-      <div class="wslot locked" id="wslot-3">4 12G</div>
-      <div class="wslot locked" id="wslot-4">5 AR-9</div>
-    </div>
-    <div class="controls-hint">
-      <kbd>WASD</kbd> Move | <kbd>E</kbd> Enter/Exit Car | <kbd>1-5</kbd> Weapons | <kbd>F</kbd> Shoot | <kbd>R</kbd> Radio | <kbd>N</kbd> Nitro | <kbd>G</kbd> Garage | <kbd>SHIFT</kbd> Sprint | <kbd>SPACE</kbd> Jump | <kbd>ESC</kbd> Pause | <kbd>M</kbd> Mute
-    </div>
-  </div>
-</div>
+  <!-- 3D world -->
+  <canvas id="game"></canvas>
+  <!-- HUD overlay, drawn with Canvas 2D by the game loop -->
+  <canvas id="hud"></canvas>
 
-<div id="dispatch-panel" class="hidden"></div>
+  <!-- Spoken status for assistive tech; the loop writes announcements here. -->
+  <p id="status-line" class="sr-only" role="status" aria-live="polite"></p>
 
-<div id="start-screen" class="overlay">
-  <div class="menu-box">
-    <h1>SOLMAR BAY</h1>
-    <p class="intro">Rico just arrived in the sun-soaked city of Solmar Bay. Opportunities are everywhere, but so are the risks. It's time to make a name.</p>
-    <div class="controls-list" style="text-align: left; margin-bottom: 20px;">
-      <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move Rico / Drive Car</p>
-      <p><kbd>Mouse</kbd> Look around</p>
-      <p><kbd>E</kbd> Enter / Exit Car</p>
-      <p><kbd>SHIFT</kbd> Sprint</p>
-      <p><kbd>SPACE</kbd> Jump / Handbrake</p>
-      <p><kbd>ESC</kbd> Pause Game</p>
+  <!-- Title screen -->
+  <section id="title-screen" class="screen" aria-label="Title screen">
+    <h1 class="logo">SOLMAR<br>BAY</h1>
+    <p class="tagline">Sunset. Speed. Second chances.</p>
+    <button id="btn-new-game" class="menu-btn" type="button">NEW GAME</button>
+    <button id="btn-continue" class="menu-btn secondary" type="button">CONTINUE</button>
+    <div class="panel">
+      <ul class="controls">
+        <li><b>W A S D / Arrows</b> Walk &amp; drive</li>
+        <li><b>Shift</b> Run</li>
+        <li><b>E</b> Enter / exit car</li>
+        <li><b>Space</b> Shoot</li>
+        <li><b>R</b> Switch radio station</li>
+        <li><b>1 – 5</b> Switch weapon</li>
+        <li><b>M</b> Mute</li>
+        <li><b>Esc</b> Pause</li>
+      </ul>
     </div>
-    <button id="start-btn" class="btn">START NEW GAME</button>
-    <button id="continue-btn" class="btn secondary hidden">CONTINUE</button>
-  </div>
-</div>
+    <p class="hint">Rico's back in Solmar Bay. Eight jobs. One big score. Don't get caught.</p>
+  </section>
 
-<div id="pause-screen" class="overlay hidden">
-  <div class="menu-box">
-    <h1>PAUSED</h1>
-    <button id="resume-btn" class="btn">RESUME</button>
-    <button id="save-btn" class="btn secondary">SAVE GAME</button>
-    <p class="controls-hint"><kbd>M</kbd> Toggle Mute</p>
-  </div>
-</div>
+  <!-- Pause menu -->
+  <section id="pause-menu" class="screen" hidden aria-label="Paused">
+    <h2 class="logo" style="font-size: clamp(40px, 7vw, 72px);">PAUSED</h2>
+    <button id="btn-resume" class="menu-btn" type="button">RESUME</button>
+    <button id="btn-quit-title" class="menu-btn secondary" type="button">QUIT TO TITLE</button>
+    <div class="panel">
+      <ul class="controls">
+        <li><b>W A S D / Arrows</b> Walk &amp; drive</li>
+        <li><b>Shift</b> Run</li>
+        <li><b>E</b> Enter / exit car</li>
+        <li><b>Space</b> Shoot</li>
+        <li><b>R</b> Switch radio station</li>
+        <li><b>1 – 5</b> Switch weapon</li>
+        <li><b>M</b> Mute</li>
+        <li><b>Esc</b> Resume</li>
+      </ul>
+    </div>
+  </section>
 
-<div id="garage-menu" class="overlay hidden">
-  <div class="menu-box">
-    <h1>SOLMAR CUSTOMS</h1>
-    <p class="intro">Tune your ride, Rico.</p>
-    <button class="gbtn" id="g-repair">Full Repair $250</button>
-    <button class="gbtn" id="g-respray">Respray $400</button>
-    <button class="gbtn" id="g-engine">Engine Tune $4000</button>
-    <button class="gbtn" id="g-armour">Armour Plating $3000</button>
-    <button class="gbtn" id="g-nitro">Nitro Kit $1800</button>
-    <button class="gbtn secondary" id="g-close">LEAVE</button>
-    <p class="controls-hint">Press G to close</p>
-  </div>
-</div>
+  <!-- Mission briefing -->
+  <section id="briefing" class="screen" hidden aria-label="Mission briefing">
+    <div class="panel">
+      <h2 id="briefing-title">JOB 1 — FIRST DELIVERY</h2>
+      <p id="briefing-body">Lena needs a package across town. Keep it quiet, keep it quick.</p>
+      <p id="briefing-payout" class="payout">Payout: $500 &nbsp;•&nbsp; Respect +10</p>
+    </div>
+    <button id="btn-briefing-go" class="menu-btn" type="button">START JOB</button>
+  </section>
 
-<script type="module" src="./src/main.js"></script>
+  <!-- Mission complete -->
+  <section id="mission-complete" class="screen" hidden aria-label="Mission complete">
+    <h2 class="logo" style="font-size: clamp(40px, 7vw, 76px);">JOB DONE</h2>
+    <div class="panel">
+      <p id="complete-body">Clean run. The crew is talking about you.</p>
+      <p id="complete-payout" class="payout">+$500 &nbsp;•&nbsp; Respect +10</p>
+    </div>
+    <button id="btn-complete-continue" class="menu-btn" type="button">CONTINUE</button>
+  </section>
+
+  <!-- Busted -->
+  <section id="busted-screen" class="screen" hidden aria-label="Busted">
+    <h2 class="logo" style="font-size: clamp(44px, 8vw, 84px); color: #7df9ff; text-shadow: 0 4px 0 #2456a8, 0 8px 24px rgba(0,0,0,0.8);">BUSTED</h2>
+    <div class="panel">
+      <p id="busted-body">The Solmar Bay police have you. The crew will sort bail — it costs you.</p>
+    </div>
+    <button id="btn-busted-retry" class="menu-btn" type="button">BACK ON THE STREET</button>
+  </section>
+
+  <!-- Wasted -->
+  <section id="wasted-screen" class="screen" hidden aria-label="Wasted">
+    <h2 class="logo" style="font-size: clamp(44px, 8vw, 84px); color: #ff5e78; text-shadow: 0 4px 0 #7a1030, 0 8px 24px rgba(0,0,0,0.8);">WASTED</h2>
+    <div class="panel">
+      <p id="wasted-body">Rico went down in Solmar Bay. The hospital patches him up — the day moves on.</p>
+    </div>
+    <button id="btn-wasted-retry" class="menu-btn" type="button">TRY AGAIN</button>
+  </section>
+
+  <!-- Vendored Three.js, then the game itself. No network requests anywhere. -->
+  <script src="./vendor/three.min.js"></script>
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>

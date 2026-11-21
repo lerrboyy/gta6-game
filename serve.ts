@@ -1,25 +1,30 @@
-// A small local server for playing the game while it is being built.
+// Solmar Bay — local play server.
 //
-// Running `node serve.ts` serves the game/ folder on
-// http://localhost:8080, so the game can be opened in a desktop browser
-// with no build step and no installed packages — Node 22's standard
-// library is all it uses. It only answers with files from inside game/,
-// sends the content types a browser game needs, and tells the browser not
-// to cache anything, so a fresh edit is what gets loaded. This is a
-// convenience for local play, not a server meant to face the internet.
+// A no-dependency dev server for trying the game in a desktop browser:
+// `node serve.ts` puts the game folder on http://localhost:8080, and
+// `node serve.ts --port 9000` picks another port instead. It only ever
+// hands out files from inside game/, answers with the content type each
+// file needs, and never reaches the wider internet. Nothing here is
+// meant for production hosting — it is a convenience for playtesting.
 
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
-const args = process.argv.slice(2);
-const portIndex = args.indexOf('--port');
-const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
-const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
+// The folder we are allowed to serve, resolved once at startup.
+const gameDir = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 
-const MIME: Record<string, string> = {
+// Which port to listen on: --port N when given, 8080 when not, and 8080
+// again when the value given is not a usable port number.
+const cliArgs = process.argv.slice(2);
+const portFlag = cliArgs.indexOf('--port');
+const wanted = portFlag === -1 ? 8080 : Number(cliArgs[portFlag + 1]);
+const port = Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
+
+// Content types for the kinds of files a browser game actually loads.
+// Anything unlisted falls back to a generic binary type below.
+const types: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -32,48 +37,51 @@ const MIME: Record<string, string> = {
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-  '.glb': 'model/gltf-binary',
-  '.gltf': 'model/gltf+json',
-  '.bin': 'application/octet-stream',
-  '.wasm': 'application/wasm',
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
   '.ogg': 'audio/ogg',
   '.txt': 'text/plain; charset=utf-8',
+  '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm',
 };
 
-createServer((request, response) => {
-  const url = new URL(request.url ?? '/', 'http://localhost');
-  let pathname: string;
+const server = createServer((req, res) => {
+  const rawUrl = new URL(req.url ?? '/', 'http://localhost');
+  let path: string;
   try {
-    pathname = decodeURIComponent(url.pathname);
+    path = decodeURIComponent(rawUrl.pathname);
   } catch {
-    response.writeHead(400).end('bad request');
+    res.writeHead(400).end('bad request');
     return;
   }
-  if (pathname.endsWith('/')) pathname += 'index.html';
-  const file = resolve(join(root, normalize(pathname)));
-  if (file !== root && !file.startsWith(root + sep)) {
-    response.writeHead(403).end('forbidden');
+  // A bare directory means its index page.
+  if (path.endsWith('/')) path += 'index.html';
+
+  // Resolve the requested file and refuse anything that escapes game/.
+  const target = resolve(join(gameDir, normalize(path)));
+  if (target !== gameDir && !target.startsWith(gameDir + sep)) {
+    res.writeHead(403).end('forbidden');
     return;
   }
-  let size: number;
+
+  let bytes: number;
   try {
-    const stats = statSync(file);
-    if (!stats.isFile()) throw new Error('not a file');
-    size = stats.size;
+    const info = statSync(target);
+    if (!info.isFile()) throw new Error('not a file');
+    bytes = info.size;
   } catch {
-    response.writeHead(404).end('not found');
+    res.writeHead(404).end('not found');
     return;
   }
-  response.writeHead(200, {
-    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'content-length': size,
+
+  res.writeHead(200, {
+    'content-type': types[extname(target).toLowerCase()] ?? 'application/octet-stream',
+    'content-length': bytes,
     'cache-control': 'no-store',
   });
-  createReadStream(file).pipe(response);
-}).listen(port, '127.0.0.1', () => {
-  console.log(`game/ is on http://localhost:${port}`);
-  console.log(`[SOLMAR BAY] Server running on port ${port} at ${new Date().toISOString()}`);
+  createReadStream(target).pipe(res);
+});
+
+server.listen(port, '127.0.0.1', () => {
+  console.log(`Solmar Bay is on http://localhost:${port}`);
 });

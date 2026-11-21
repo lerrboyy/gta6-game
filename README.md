@@ -1,39 +1,83 @@
-# gta6-game
+# Solmar Bay
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/lerrboyy/gta6-game/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/lerrboyy/gta6-game/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![Bounty](https://make.fun/badge/gta6-01)](https://make.fun/bounty/gta6-01)
+[![Rank](https://make.fun/badge/gta6-01/lerrboyy/gta6-game/rank)](https://make.fun/bounty/gta6-01)
+[![Reward](https://make.fun/badge/gta6-01/lerrboyy/gta6-game/reward)](https://make.fun/bounty/gta6-01)
 
-Solmar Bay is a 3D open-world crime game in the spirit of GTA 6. Rico arrives in a sun-soaked coastal city with nothing to his name — explore it on foot or behind the wheel, steal cars, stay one step ahead of the police, and run jobs to build your empire.
+Solmar Bay is a 3D third-person open-world action and driving game in the
+spirit of GTA, made for the make.fun **gta6-01** bounty. It is set in a
+coastal Latin-Caribbean city at golden-hour sunset: a palm-lined waterfront
+boulevard, a beach and a pier, blocky low-poly buildings with warm lit
+windows and pink-and-cyan neon signs.
 
-## Features
+You play Rico, a young driver in a teal jacket and a cap, back in town and
+short on cash. Walk the streets, take a car, and work through an eight-job
+story chain with his crew, Lena and Marco — deliveries, pickups under watch,
+chases, protection runs, a high-speed escape, a night job, a garage favour,
+and one final big score. Every job pays money and earns respect; the police
+notice everything. Wanted stars climb with each crime, cruisers give chase,
+roadblocks appear, and a helicopter circles overhead with a spotlight once
+things get serious. Get busted or wasted and the day moves on without you.
 
-- Third-person on-foot and driving in a coastal open-world city
-- 5 weapon slots: Fists, .38, SMG, 12G, AR-9
-- SOLMAR FM radio with two stations
-- SOLMAR CUSTOMS garage upgrades: repair, respray, engine, armour, nitro
-- 8 story jobs with crew dialogue (Rico, Lena, Marco)
-- Wanted stars with a police dispatch list, helicopter and roadblocks
-- Round minimap, in-game clock and day counter, respect meter
-- Save/continue
+The city is fully procedural — every building, palm, street and neon sign is
+generated in code from a fixed seed, so Solmar Bay looks the same every time
+you load it. There are no downloaded assets and no network requests: the 3D
+world is Three.js (vendored in the repo), the HUD is a Canvas 2D overlay, and
+all sound — engine hum, gunshots, sirens, radio — is synthesized live with
+WebAudio. Two radio stations keep you company: SOLMAR FM 98.6 and a faster
+electronic station. Your money, respect, day, clock and garage upgrades save
+to the browser, so you can pick up where you left off.
 
-## Controls
+## How to run it
 
-- WASD move/drive, mouse look
-- E enter/exit car
-- 1-5 weapons, F shoot
-- R radio, N nitro, G garage (at SOLMAR CUSTOMS)
-- Shift sprint, Space jump/handbrake
-- Esc pause, M mute
-
-## Run it
+You need Node.js (version 22 or newer). From the repo root:
 
 ```sh
 node serve.ts
 ```
 
-Then open http://localhost:8080 in a desktop browser.
+Then open <http://localhost:8080> in a desktop browser. To use a different
+port, pass it along: `node serve.ts --port 9000`.
 
----
+To build the submission package instead (the game, the screenshots and the
+dossier the judges read), run:
 
-<sub>Entered on [make.fun](https://make.fun/?ref=lerrboyy&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+```sh
+MAKEFUN_OUTPUT_DIR=/tmp/solmar-out node main.ts
+```
+
+That copies everything into the output directory and writes
+`dossier.json` there.
+
+## Controls
+
+| Keys | What they do |
+| --- | --- |
+| W A S D / Arrow keys | Walk, and steer / drive in a car |
+| Shift | Run |
+| E | Enter or exit a car |
+| Space | Shoot |
+| R | Switch radio station |
+| 1 – 5 | Switch weapon |
+| M | Mute |
+| Esc | Pause / resume |
+
+## The HUD
+
+Money, the day and clock, and your wanted stars sit top right. The current
+job objective and its distance are top left. Five weapon slots run along the
+bottom left, the active one highlighted. Bottom right holds the round
+minimap — streets, your arrow, police dots, the mission marker — with your
+speed and the radio station beside it. The police dispatch panel lists
+active units with their distance and tactic, and the respect meter and
+armour / health bars sit bottom centre.
+
+## Tips
+
+- Stealing a car in front of a cruiser is the fastest way to earn a star.
+- Nitro gets you out of a roadblock; it does not get you out of a helicopter
+  spotlight. Break line of sight down a side street instead.
+- The garage (SOLMAR CUSTOMS) sells engine, armour and nitro upgrades and a
+  respray — spend job money there before the big score.
+- Finish a job, then check the radio: the crew's next call usually comes
+  with the next sunrise.

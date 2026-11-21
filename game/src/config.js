@@ -1,121 +1,125 @@
-// Solmar Bay — one shared tuning table.
+// Every tuning value for Solmar Bay, in one place.
 //
-// Everything the rest of the game needs to agree on lives in this single
-// object: how big the map is, how the player moves, what the guns do, what
-// the garage charges, which radio stations exist, who is on the crew, how
-// fast the clock runs, and what each respect rank and wanted level is called.
-// Nothing here is read from anywhere else, so changing a number here changes
-// it everywhere at once — the HUD, the garage, the police and the missions
-// all read from this same place.
+// Nothing else in the game hard-codes a number that matters: speeds,
+// damage, payouts, prices, colours and the screenshot targets all live
+// here, so balancing the game means editing this file and nothing else.
+// Values are grouped by the system that owns them. Distances are metres,
+// speeds are metres per second (the HUD converts to MPH for display),
+// headings are radians, and colours are hex numbers in the 0xRRGGBB form
+// the renderer expects.
 
-export const CONFIG = {
-  // Map dimensions, in world units. Streets are laid out on a grid of
-  // blocks separated by roads of the width below.
-  WORLD_SIZE: 300,
-  BLOCK_SIZE: 40,
-  ROAD_WIDTH: 12,
+export const config = {
+  // The fixed seed the city generator is built from. Change this and the
+  // whole city — streets, buildings, palms — regenerates differently.
+  worldSeed: 20261121,
 
-  // How Rico moves on foot, and how hard the world pulls him back down.
-  PLAYER_SPEED: 8,
-  PLAYER_SPRINT_MULT: 1.8,
-  JUMP_FORCE: 9,
-  GRAVITY: 25,
+  // Golden-hour sunset palette. The sky runs from a deep orange at the
+  // horizon up to purple-pink overhead; the sun itself is a warm amber.
+  palette: {
+    skyHorizon: 0xff7a2a,
+    skyTop: 0x7a3b8f,
+    sunColour: 0xffc46b,
+    sunIntensity: 1.6,
+    ambientColour: 0x8a6a9a,
+    ambientIntensity: 0.55,
+    windowGlow: 0xffd27a,
+    neonPink: 0xff2e88,
+    neonCyan: 0x2ee6ff,
+    ocean: 0x1d4e6b,
+    sand: 0xd9b380,
+    road: 0x2b2b33,
+    sidewalk: 0x6b6b72,
+    // Building face colours, picked per building at random.
+    buildings: [0xc96f4a, 0xd9a05b, 0x8f6a8a, 0x5b7d8a, 0xb8574f, 0x7a8a5b, 0xe0b070],
+    rooftop: 0x4a4a52,
+  },
 
-  // Local-storage slot for the save file.
-  SAVE_KEY: 'solmar_bay_save_v1',
+  // Rico on foot.
+  player: {
+    walkSpeed: 4.2,
+    runSpeed: 8.0,
+    turnSpeed: 7.5,
+    health: 100,
+    armour: 100,
+  },
 
-  // The five weapons, in slot order. Damage is per hit, fireRateMs is the
-  // gap between shots, range is in world units, price is what an unowned
-  // weapon costs, and locked marks the ones Rico starts without.
-  WEAPONS: [
-    {
-      name: 'Fists',
-      damage: 1,
-      fireRateMs: 400,
-      range: 3,
-      price: 0,
-      locked: false,
-    },
-    {
-      name: 'Pistol ".38"',
-      damage: 2,
-      fireRateMs: 450,
-      range: 40,
-      price: 0,
-      locked: false,
-    },
-    {
-      name: 'SMG',
-      damage: 1,
-      fireRateMs: 140,
-      range: 35,
-      price: 1200,
-      locked: true,
-    },
-    {
-      name: 'Shotgun "12G"',
-      damage: 5,
-      fireRateMs: 900,
-      range: 18,
-      price: 2500,
-      locked: true,
-    },
-    {
-      name: 'Rifle "AR-9"',
-      damage: 3,
-      fireRateMs: 200,
-      range: 60,
-      price: 5000,
-      locked: true,
-    },
+  // Driving. Acceleration and braking are in m/s^2, top speed in m/s,
+  // steering in radians per second at full lock, nitro as a multiplier
+  // on top speed while held.
+  car: {
+    acceleration: 14.0,
+    braking: 26.0,
+    reverseTopSpeed: 12.0,
+    topSpeed: 42.0,
+    steering: 1.9,
+    steeringGrip: 0.86,
+    nitroBoost: 1.45,
+    nitroDrain: 0.35,
+    damageSmokeAt: 0.45,
+  },
+
+  // The five weapon slots, in HUD order. Damage is per hit, fireRate is
+  // shots per second, range is the maximum useful distance in metres.
+  weapons: [
+    { slot: 1, name: 'Fists', damage: 12, fireRate: 2.0, range: 2.0 },
+    { slot: 2, name: 'Pistol', damage: 18, fireRate: 3.0, range: 45.0 },
+    { slot: 3, name: 'SMG', damage: 11, fireRate: 9.0, range: 55.0 },
+    { slot: 4, name: 'Shotgun', damage: 34, fireRate: 1.1, range: 22.0 },
+    { slot: 5, name: 'Rifle', damage: 42, fireRate: 5.5, range: 120.0 },
   ],
 
-  // What SOLMAR CUSTOMS charges, and how much extra top speed a fully
-  // tuned engine adds. Upgrades cap out at maxLevel.
-  GARAGE: {
-    repair: 250,
+  // The wanted system. Police cruisers appear at this distance from the
+  // player; the number of units chasing grows with the star level, and
+  // the helicopter joins the hunt from three stars upward.
+  police: {
+    spawnDistance: 90,
+    despawnDistance: 220,
+    maxUnitsPerStar: 2,
+    helicopterFromStars: 3,
+    ramDistance: 6,
+    bustDistance: 3.5,
+    roadblockFromStars: 4,
+    heatDecaySeconds: 45,
+  },
+
+  // The eight-job story chain: payout in dollars and respect gained on
+  // completion, in story order.
+  missions: [
+    { id: 'first-delivery', payout: 500, respect: 10 },
+    { id: 'watched-pickup', payout: 800, respect: 12 },
+    { id: 'the-chase', payout: 1200, respect: 15 },
+    { id: 'protection-run', payout: 1500, respect: 18 },
+    { id: 'high-speed-escape', payout: 2000, respect: 22 },
+    { id: 'night-job', payout: 2500, respect: 25 },
+    { id: 'garage-favour', payout: 1800, respect: 20 },
+    { id: 'the-big-score', payout: 5000, respect: 40 },
+  ],
+
+  // SOLMAR CUSTOMS garage prices, in dollars.
+  garage: {
+    engine: 1500,
+    armour: 1200,
+    nitro: 900,
     respray: 400,
-    engine: 4000,
-    armour: 3000,
-    nitro: 1800,
-    engineMaxSpeedBonus: 8,
-    maxLevel: 3,
   },
 
-  // The two stations on the dial, with their frequencies.
-  RADIO: [
-    { name: 'SOLMAR FM', freq: 98.6 },
-    { name: 'PALM 107', freq: 107.1 },
+  // The two radio stations. Frequency is in MHz; style is a short
+  // description the audio module uses to pick its synth loop.
+  radio: [
+    { name: 'SOLMAR FM', frequency: 98.6, style: 'laid-back Latin groove' },
+    { name: 'NEON WAVE', frequency: 104.3, style: 'fast electronic beat' },
   ],
 
-  // Rico's crew, with the job each of them does and the colour used to
-  // mark them in the world.
-  CREW: [
-    { name: 'Rico', role: 'Wheelman', color: 0x0e7c7b },
-    { name: 'Lena', role: 'Fixer', color: 0xff6b9d },
-    { name: 'Marco', role: 'Driver', color: 0xff9500 },
-  ],
-
-  // The in-game clock: one full day passes in dayLengthMin real minutes,
-  // and a fresh game opens at the hour and minute below.
-  CLOCK: {
-    dayLengthMin: 8,
-    startHour: 9,
-    startMinute: 31,
+  // The exact world state the screenshot scenario sets up, so the play
+  // shot is reproducible: money, wanted stars, day and clock, speed and
+  // the active radio station.
+  screenshot: {
+    money: 18450,
+    wantedStars: 3,
+    day: 1,
+    clockHour: 9,
+    clockMinute: 31,
+    speedMph: 61,
+    station: 'SOLMAR FM 98.6',
   },
-
-  // Respect ranks. Each entry is the respect total a rank starts at, and
-  // the name shown for it — threshold and min carry the same value, and
-  // name and label carry the same text.
-  RESPECT_LEVELS: [
-    { threshold: 0, min: 0, name: 'NEW IN TOWN', label: 'NEW IN TOWN' },
-    { threshold: 150, min: 150, name: 'STREET KNOWN', label: 'STREET KNOWN' },
-    { threshold: 400, min: 400, name: 'RESPECTED', label: 'RESPECTED' },
-    { threshold: 800, min: 800, name: 'FEARED', label: 'FEARED' },
-    { threshold: 1500, min: 1500, name: 'KING OF SOLMAR', label: 'KING OF SOLMAR' },
-  ],
-
-  // What the HUD calls each wanted level, by star count from 0 to 5.
-  // Level 0 has no name because there is no heat to describe.
-  WANTED_NAMES: ['', 'SOLMAR PD', 'SOLMAR PD', 'SBPD + HELI', 'SBPD + ROADBLOCK', 'FULL MANHUNT'],
 };
