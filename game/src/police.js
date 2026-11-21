@@ -1,8 +1,25 @@
+// Solmar Bay — the wanted system.
+//
+// PoliceManager runs the heat: patrol cruisers that chase Rico down, the
+// spotlight helicopter that joins at three stars, the roadblock that
+// forms at four, the dispatch list the HUD reads, the slow wanted decay
+// when Rico slips out of sight, and the BUSTED sequence when a cruiser
+// catches him on foot.
 import * as THREE from './three.js';
 import { CONFIG } from './config.js';
 
-// v3: the wanted system — patrol cars, the helicopter and roadblocks, plus the
-// dispatch list the HUD shows while Rico is hot.
+// One cruiser per wanted star (capped at five), each chasing a little
+// faster as the heat rises.
+const MAX_CRUISERS = 5;
+const CRUISER_BASE_SPEED = 18;
+const CRUISER_SPEED_PER_STAR = 3;
+const HELI_STARS = 3;
+const HELI_HEIGHT = 25;
+const ROADBLOCK_STARS = 4;
+const DECAY_RANGE = 40;
+const DECAY_SECONDS = 10;
+const BUSTED_SECONDS = 2.0;
+
 export class PoliceManager {
   constructor(scene, city) {
     this.scene = scene;
@@ -11,245 +28,254 @@ export class PoliceManager {
     this.outOfSightTimer = 0;
     this.bustedTimer = 0;
     this.heli = null;
+    this.heliRotor = null;
     this.roadblock = [];
     this.unitNames = ['PIER 5', 'TIDE 6', 'TIDE 37', 'AIR ONE', 'TAC-45', 'K-9 12'];
-    // Support structures for police dispatch tracking, aerial helicopter units, and tactical roadblocks
     this.bustedOverlayEl = null;
-    
+
     this.initBustedOverlay();
   }
 
+  // The red BUSTED screen. Reuse the one from the page when it exists;
+  // otherwise build it once and pin it to the document body.
   initBustedOverlay() {
-    let el = document.getElementById('busted-overlay');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'busted-overlay';
-      el.className = 'overlay hidden';
-      el.style.background = 'rgba(180, 0, 0, 0.75)';
-      el.innerHTML = '<div class="menu-box"><h1>BUSTED</h1><p class="intro">Busted by Solmar Bay PD! Cash seized, back on the streets.</p></div>';
-      document.body.appendChild(el);
+    let overlay = document.getElementById('busted-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'busted-overlay';
+      overlay.className = 'overlay hidden';
+      overlay.style.background = 'rgba(180, 0, 0, 0.75)';
+      overlay.innerHTML =
+        '<div class="menu-box"><h1>BUSTED</h1>' +
+        '<p class="intro">Busted by Solmar Bay PD! Cash seized, back on the streets.</p></div>';
+      document.body.appendChild(overlay);
     }
-    this.bustedOverlayEl = el;
+    this.bustedOverlayEl = overlay;
   }
 
+  // A white patrol car: black hood, dark cabin, red-and-blue light bar,
+  // four wheels. Faces +Z, like the traffic cars.
   createPoliceCarMesh() {
-    const carGroup = new THREE.Group();
+    const cruiser = new THREE.Group();
 
-    // White base body
-    const bodyGeo = new THREE.BoxGeometry(2.0, 0.7, 4.2);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.3 });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(2.0, 0.7, 4.2),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.3 })
+    );
     body.position.y = 0.6;
     body.castShadow = true;
-    carGroup.add(body);
+    cruiser.add(body);
 
-    // Black hood/sides accent
-    const hoodGeo = new THREE.BoxGeometry(2.02, 0.71, 2.0);
-    const hoodMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 });
-    const hood = new THREE.Mesh(hoodGeo, hoodMat);
+    const hood = new THREE.Mesh(
+      new THREE.BoxGeometry(2.02, 0.71, 2.0),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 })
+    );
     hood.position.set(0, 0.6, 1.0);
-    carGroup.add(hood);
+    cruiser.add(hood);
 
-    // Cabin
-    const cabinGeo = new THREE.BoxGeometry(1.6, 0.6, 2.2);
-    const cabinMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 });
-    const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.6, 2.2),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 })
+    );
     cabin.position.set(0, 1.15, -0.2);
-    carGroup.add(cabin);
+    cruiser.add(cabin);
 
-    // Light bar on top
-    const barGeo = new THREE.BoxGeometry(1.0, 0.2, 0.4);
-    const barMat = new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0x0000ff, roughness: 0.1 });
-    const bar = new THREE.Mesh(barGeo, barMat);
-    bar.position.set(0, 1.6, 0);
-    carGroup.add(bar);
+    const lightBar = new THREE.Mesh(
+      new THREE.BoxGeometry(1.0, 0.2, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0x0000ff, roughness: 0.1 })
+    );
+    lightBar.position.set(0, 1.6, 0);
+    cruiser.add(lightBar);
 
-    // Wheels
     const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 12);
     wheelGeo.rotateZ(Math.PI / 2);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
-    const wheelPositions = [
+    const corners = [
       [-1.05, 0.35, 1.4], [1.05, 0.35, 1.4],
-      [-1.05, 0.35, -1.4], [1.05, 0.35, -1.4]
+      [-1.05, 0.35, -1.4], [1.05, 0.35, -1.4],
     ];
-    for (const pos of wheelPositions) {
+    for (const corner of corners) {
       const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.position.set(...pos);
-      carGroup.add(wheel);
+      wheel.position.set(corner[0], corner[1], corner[2]);
+      cruiser.add(wheel);
     }
 
-    return carGroup;
+    return cruiser;
   }
 
+  // The police helicopter: dark body and tail, a long main rotor on top
+  // (kept as this.heliRotor so update() can spin it), and a pale
+  // spotlight cone hanging underneath.
   createHeliMesh() {
-    const heliGroup = new THREE.Group();
+    const heli = new THREE.Group();
+    const hullMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b, roughness: 0.3, metalness: 0.6,
+    });
 
-    // Dark body box (2.2 x 0.8 x 4)
-    const bodyGeo = new THREE.BoxGeometry(2.2, 0.8, 4);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.6 });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 4), hullMat);
     body.position.y = 0.4;
     body.castShadow = true;
-    heliGroup.add(body);
+    heli.add(body);
 
-    // Tail box (0.5 x 0.5 x 3) behind it
-    const tailGeo = new THREE.BoxGeometry(0.5, 0.5, 3);
-    const tailMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.6 });
-    const tail = new THREE.Mesh(tailGeo, tailMat);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 3), hullMat);
     tail.position.set(0, 0.5, -3.5);
-    heliGroup.add(tail);
+    heli.add(tail);
 
-    // Main rotor (thin box 7 x 0.08 x 0.5) on top stored as this.heliRotor
-    const rotorGeo = new THREE.BoxGeometry(7, 0.08, 0.5);
-    const rotorMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 });
-    const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+    const rotor = new THREE.Mesh(
+      new THREE.BoxGeometry(7, 0.08, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 })
+    );
     rotor.position.set(0, 0.85, 0);
-    heliGroup.add(rotor);
+    heli.add(rotor);
     this.heliRotor = rotor;
 
-    // White spotlight cone under it (cone mesh pointing down, semi-transparent)
     const coneGeo = new THREE.ConeGeometry(4, 12, 16);
     coneGeo.translate(0, -6, 0);
-    const coneMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
-    const cone = new THREE.Mesh(coneGeo, coneMat);
-    heliGroup.add(cone);
+    const cone = new THREE.Mesh(
+      coneGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.2, side: THREE.DoubleSide,
+      })
+    );
+    heli.add(cone);
 
-    return heliGroup;
+    return heli;
   }
 
+  // What the HUD dispatch panel shows: one row per cruiser (RAMMING up
+  // close, PURSUIT further out), then the heli and the roadblock when
+  // they are active. At most five rows.
   getDispatch(world) {
-    const list = [];
+    const rows = [];
     for (let i = 0; i < this.policeCars.length; i++) {
-      const pCar = this.policeCars[i];
-      const rawDist = pCar.position.distanceTo(world.position);
-      const dist = Math.round(rawDist) + 'M';
-      const tactic = rawDist < 15 ? 'RAMMING' : 'PURSUIT';
-      list.push({
+      const cruiser = this.policeCars[i];
+      const gap = cruiser.position.distanceTo(world.position);
+      rows.push({
         name: this.unitNames[i % this.unitNames.length],
-        dist: dist,
-        tactic: tactic
+        dist: Math.round(gap) + 'M',
+        tactic: gap < 15 ? 'RAMMING' : 'PURSUIT',
       });
     }
     if (this.heli) {
-      list.push({ name: 'AIR ONE', dist: '55M', tactic: 'SPOTLIGHT' });
+      rows.push({ name: 'AIR ONE', dist: '55M', tactic: 'SPOTLIGHT' });
     }
     if (this.roadblock.length > 0) {
-      list.push({ name: 'TAC-45', dist: '120M', tactic: 'ROADBLOCK' });
+      rows.push({ name: 'TAC-45', dist: '120M', tactic: 'ROADBLOCK' });
     }
-    return list.slice(0, 5);
+    return rows.slice(0, 5);
   }
 
+  // The wanted-level label for the dispatch heading, clamped to 0-5.
   getWantedName(world) {
-    return CONFIG.WANTED_NAMES[Math.min(5, Math.max(0, world.wanted))];
+    const level = Math.min(5, Math.max(0, world.wanted));
+    return CONFIG.WANTED_NAMES[level];
   }
 
   update(dt, world) {
-    const targetWanted = Math.min(5, Math.max(0, world.wanted));
-    
-    // Manage number of police cars (1 per star, max 5)
-    while (this.policeCars.length < targetWanted && this.policeCars.length < 5) {
+    const wanted = Math.min(5, Math.max(0, world.wanted));
+
+    // Keep one cruiser per star, up to the cap; shed the extras when
+    // the heat drops.
+    while (this.policeCars.length < wanted && this.policeCars.length < MAX_CRUISERS) {
       this.spawnPoliceCar(world.position);
     }
-    while (this.policeCars.length > targetWanted) {
-      const pCar = this.policeCars.pop();
-      if (pCar && pCar.mesh) this.scene.remove(pCar.mesh);
+    while (this.policeCars.length > wanted) {
+      const extra = this.policeCars.pop();
+      if (extra && extra.mesh) this.scene.remove(extra.mesh);
     }
 
-    let nearestPoliceDist = 999;
+    let closest = 999;
 
-    for (const pCar of this.policeCars) {
-      const toPlayer = world.position.clone().sub(pCar.position);
-      const dist = toPlayer.length();
-      if (dist < nearestPoliceDist) {
-        nearestPoliceDist = dist;
-      }
+    for (const cruiser of this.policeCars) {
+      const toRico = world.position.clone().sub(cruiser.position);
+      const gap = toRico.length();
+      if (gap < closest) closest = gap;
 
-      if (dist > 1.5) {
-        toPlayer.normalize();
-        pCar.rotation = Math.atan2(toPlayer.x, toPlayer.z);
-        pCar.mesh.rotation.y = pCar.rotation;
-        
-        const speed = 18 + targetWanted * 3;
-        const nextPos = pCar.position.clone().addScaledVector(toPlayer, speed * dt);
-        
-        if (!this.city.checkCollision(nextPos, 1.5)) {
-          pCar.position.copy(nextPos);
+      if (gap > 1.5) {
+        toRico.normalize();
+        cruiser.rotation = Math.atan2(toRico.x, toRico.z);
+        cruiser.mesh.rotation.y = cruiser.rotation;
+
+        const speed = CRUISER_BASE_SPEED + wanted * CRUISER_SPEED_PER_STAR;
+        const step = cruiser.position.clone().addScaledVector(toRico, speed * dt);
+
+        if (!this.city.checkCollision(step, 1.5)) {
+          cruiser.position.copy(step);
         } else {
-          // Nudge around obstacle
-          pCar.position.x += toPlayer.z * speed * dt * 0.6;
-          pCar.position.z -= toPlayer.x * speed * dt * 0.6;
+          // Blocked by a building: slide sideways around it.
+          cruiser.position.x += toRico.z * speed * dt * 0.6;
+          cruiser.position.z -= toRico.x * speed * dt * 0.6;
         }
       }
 
-      pCar.mesh.position.copy(pCar.position);
+      cruiser.mesh.position.copy(cruiser.position);
 
-      // Check BUSTED or ramming
-      if (dist < 3.5) {
+      // Contact: ram Rico's car to slow it, or bust him on foot.
+      if (gap < 3.5) {
         if (world.isDriving && world.vehicles.drivenCar) {
-          // Ram car: slow down driven car
           world.vehicles.drivenCar.speed *= 0.75;
-        } else if (!world.isDriving && dist < 2.5) {
+        } else if (!world.isDriving && gap < 2.5) {
           this.triggerBusted(world);
           return;
         }
       }
     }
 
-    // Helicopter support (wanted >= 3)
-    if (targetWanted >= 3 && !this.heli) {
+    // The helicopter joins at three stars and hovers over Rico; it
+    // leaves, rotor and all, when the heat falls below three.
+    if (wanted >= HELI_STARS && !this.heli) {
       this.heli = this.createHeliMesh();
-      this.heli.position.copy(world.position).add(new THREE.Vector3(0, 25, 0));
+      this.heli.position.copy(world.position).add(new THREE.Vector3(0, HELI_HEIGHT, 0));
       this.scene.add(this.heli);
-    } else if (targetWanted < 3 && this.heli) {
+    } else if (wanted < HELI_STARS && this.heli) {
       this.scene.remove(this.heli);
       this.heli = null;
       this.heliRotor = null;
     }
     if (this.heli) {
-      this.heli.position.copy(world.position).add(new THREE.Vector3(0, 25, 0));
-      if (this.heliRotor) {
-        this.heliRotor.rotation.y += dt * 20;
-      }
+      this.heli.position.copy(world.position).add(new THREE.Vector3(0, HELI_HEIGHT, 0));
+      if (this.heliRotor) this.heliRotor.rotation.y += dt * 20;
     }
 
-    // Roadblock support (wanted >= 4)
-    if (targetWanted >= 4 && this.roadblock.length === 0) {
-      const isDriving = world.isDriving && world.vehicles.drivenCar;
-      const dir = isDriving
-        ? new THREE.Vector3(Math.sin(world.vehicles.drivenCar.rotation), 0, Math.cos(world.vehicles.drivenCar.rotation))
+    // At four stars a roadblock forms ahead of Rico: two cruisers parked
+    // side by side across his path, 40 ahead while driving, 30 on foot.
+    if (wanted >= ROADBLOCK_STARS && this.roadblock.length === 0) {
+      const driving = world.isDriving && world.vehicles.drivenCar;
+      const heading = driving
+        ? new THREE.Vector3(
+            Math.sin(world.vehicles.drivenCar.rotation), 0,
+            Math.cos(world.vehicles.drivenCar.rotation)
+          )
         : new THREE.Vector3(-Math.sin(world.rotation), 0, -Math.cos(world.rotation));
-      const aheadDist = isDriving ? 40 : 30;
-      const basePos = isDriving ? world.vehicles.drivenCar.position : world.position;
-      const ahead = basePos.clone().addScaledVector(dir, aheadDist);
-      const perp = new THREE.Vector3(-dir.z, 0, dir.x);
+      const aheadBy = driving ? 40 : 30;
+      const origin = driving ? world.vehicles.drivenCar.position : world.position;
+      const ahead = origin.clone().addScaledVector(heading, aheadBy);
+      const sideways = new THREE.Vector3(-heading.z, 0, heading.x);
+      const facing = Math.atan2(heading.x, heading.z);
 
-      const posLeft = ahead.clone().addScaledVector(perp, 4);
-      const posRight = ahead.clone().addScaledVector(perp, -4);
+      const leftCar = this.createPoliceCarMesh();
+      leftCar.position.copy(ahead.clone().addScaledVector(sideways, 4));
+      leftCar.rotation.y = facing;
+      this.scene.add(leftCar);
 
-      const carLeft = this.createPoliceCarMesh();
-      carLeft.position.copy(posLeft);
-      const rot = Math.atan2(dir.x, dir.z);
-      carLeft.rotation.y = rot;
-      this.scene.add(carLeft);
+      const rightCar = this.createPoliceCarMesh();
+      rightCar.position.copy(ahead.clone().addScaledVector(sideways, -4));
+      rightCar.rotation.y = facing;
+      this.scene.add(rightCar);
 
-      const carRight = this.createPoliceCarMesh();
-      carRight.position.copy(posRight);
-      carRight.rotation.y = rot;
-      this.scene.add(carRight);
-
-      this.roadblock = [carLeft, carRight];
-    } else if (targetWanted < 4 && this.roadblock.length > 0) {
-      for (const rbCar of this.roadblock) {
-        if (rbCar) this.scene.remove(rbCar);
+      this.roadblock = [leftCar, rightCar];
+    } else if (wanted < ROADBLOCK_STARS && this.roadblock.length > 0) {
+      for (const blocker of this.roadblock) {
+        if (blocker) this.scene.remove(blocker);
       }
       this.roadblock = [];
     }
 
-    // Wanted decay: no police car within ~40 units for 10 seconds -> -1 star
-    if (targetWanted > 0) {
-      if (nearestPoliceDist > 40) {
+    // Out of sight: no cruiser within range for ten seconds, lose a star.
+    if (wanted > 0) {
+      if (closest > DECAY_RANGE) {
         this.outOfSightTimer += dt;
-        if (this.outOfSightTimer >= 10.0) {
+        if (this.outOfSightTimer >= DECAY_SECONDS) {
           world.wanted = Math.max(0, world.wanted - 1);
           this.outOfSightTimer = 0;
         }
@@ -258,7 +284,7 @@ export class PoliceManager {
       }
     }
 
-    // Handle BUSTED overlay timer
+    // Hide the BUSTED overlay once its timer runs out.
     if (this.bustedTimer > 0) {
       this.bustedTimer -= dt;
       if (this.bustedTimer <= 0 && this.bustedOverlayEl) {
@@ -267,28 +293,34 @@ export class PoliceManager {
     }
   }
 
+  // Drop a fresh cruiser 70-100 units out, in a random direction around
+  // the player. The angle is drawn first, then the distance, matching
+  // the original spawn order.
   spawnPoliceCar(playerPos) {
     const mesh = this.createPoliceCarMesh();
     const angle = Math.random() * Math.PI * 2;
-    const dist = 70 + Math.random() * 30;
-    const x = playerPos.x + Math.sin(angle) * dist;
-    const z = playerPos.z + Math.cos(angle) * dist;
-    
+    const distance = 70 + Math.random() * 30;
+    const x = playerPos.x + Math.sin(angle) * distance;
+    const z = playerPos.z + Math.cos(angle) * distance;
+
     mesh.position.set(x, 0, z);
     this.scene.add(mesh);
 
     this.policeCars.push({
       mesh: mesh,
       position: mesh.position,
-      rotation: 0
+      rotation: 0,
     });
   }
 
+  // Caught: heat cleared, 10% of the cash seized, health restored, Rico
+  // dumped back at the precinct corner (15, 0, 25) on foot, every unit
+  // stood down, and the BUSTED overlay shown for two seconds.
   triggerBusted(world) {
     world.wanted = 0;
-    world.cash = Math.max(0, Math.floor(world.cash * 0.9)); // Lose 10% cash
+    world.cash = Math.max(0, Math.floor(world.cash * 0.9));
     world.health = 100;
-    
+
     if (world.isDriving && world.vehicles.drivenCar) {
       world.vehicles.drivenCar = null;
       world.isDriving = false;
@@ -297,8 +329,8 @@ export class PoliceManager {
 
     world.setPosition(15, 0, 25);
 
-    for (const pCar of this.policeCars) {
-      if (pCar && pCar.mesh) this.scene.remove(pCar.mesh);
+    for (const cruiser of this.policeCars) {
+      if (cruiser && cruiser.mesh) this.scene.remove(cruiser.mesh);
     }
     this.policeCars = [];
 
@@ -307,14 +339,14 @@ export class PoliceManager {
       this.heli = null;
       this.heliRotor = null;
     }
-    for (const rbCar of this.roadblock) {
-      if (rbCar) this.scene.remove(rbCar);
+    for (const blocker of this.roadblock) {
+      if (blocker) this.scene.remove(blocker);
     }
     this.roadblock = [];
 
     if (this.bustedOverlayEl) {
       this.bustedOverlayEl.classList.remove('hidden');
     }
-    this.bustedTimer = 2.0;
+    this.bustedTimer = BUSTED_SECONDS;
   }
 }

@@ -1,60 +1,153 @@
+// A thin doorway into the vendored Three.js build.
+//
+// The library itself is loaded from game/vendor/three.min.js, which puts
+// the whole API on the global THREE object. This module pulls the pieces
+// the rest of the game uses off that object and hands them on as named
+// exports, so the other modules can import from here instead of touching
+// the global directly. Nothing is wrapped or renamed — each name below is
+// exactly the Three.js class or constant of the same name.
+
 import '../vendor/three.min.js';
+
+// Grab the global the vendor script created, whichever global scope it
+// ended up on in this browser.
 const T = window.THREE || self.THREE;
-export const WebGLRenderer = T.WebGLRenderer;
-export const Scene = T.Scene;
-export const PerspectiveCamera = T.PerspectiveCamera;
-export const Vector3 = T.Vector3;
-export const Vector2 = T.Vector2;
-export const Matrix4 = T.Matrix4;
-export const Quaternion = T.Quaternion;
-export const Euler = T.Euler;
-export const Color = T.Color;
-export const Box3 = T.Box3;
-export const Sphere = T.Sphere;
-export const Raycaster = T.Raycaster;
-export const Clock = T.Clock;
-export const Mesh = T.Mesh;
-export const Group = T.Group;
-export const Object3D = T.Object3D;
-export const BufferGeometry = T.BufferGeometry;
-export const BufferAttribute = T.BufferAttribute;
-export const Float32BufferAttribute = T.Float32BufferAttribute;
-export const Uint16BufferAttribute = T.Uint16BufferAttribute;
-export const Int32BufferAttribute = T.Int32BufferAttribute;
-export const BoxGeometry = T.BoxGeometry;
-export const SphereGeometry = T.SphereGeometry;
-export const PlaneGeometry = T.PlaneGeometry;
-export const CylinderGeometry = T.CylinderGeometry;
-export const ConeGeometry = T.ConeGeometry;
-export const TorusGeometry = T.TorusGeometry;
-export const MeshBasicMaterial = T.MeshBasicMaterial;
-export const MeshLambertMaterial = T.MeshLambertMaterial;
-export const MeshPhongMaterial = T.MeshPhongMaterial;
-export const MeshStandardMaterial = T.MeshStandardMaterial;
-export const MeshPhysicalMaterial = T.MeshPhysicalMaterial;
-export const PointsMaterial = T.PointsMaterial;
-export const LineBasicMaterial = T.LineBasicMaterial;
-export const ShaderMaterial = T.ShaderMaterial;
-export const RawShaderMaterial = T.RawShaderMaterial;
-export const DirectionalLight = T.DirectionalLight;
-export const PointLight = T.PointLight;
-export const SpotLight = T.SpotLight;
-export const AmbientLight = T.AmbientLight;
-export const HemisphereLight = T.HemisphereLight;
-export const TextureLoader = T.TextureLoader;
-export const ImageLoader = T.ImageLoader;
-export const AudioListener = T.AudioListener;
-export const Audio = T.Audio;
-export const AudioLoader = T.AudioLoader;
-export const Fog = T.Fog;
-export const FogExp2 = T.FogExp2;
-export const AnimationMixer = T.AnimationMixer;
-export const KeyframeTrack = T.KeyframeTrack;
-export const VectorKeyframeTrack = T.VectorKeyframeTrack;
-export const QuaternionKeyframeTrack = T.QuaternionKeyframeTrack;
-export const CircleGeometry = T.CircleGeometry;
-export const RingGeometry = T.RingGeometry;
-export const CanvasTexture = T.CanvasTexture;
-export const InstancedMesh = T.InstancedMesh;
-export const DynamicDrawUsage = T.DynamicDrawUsage;
-export const BackSide = T.BackSide;
+
+// Core scene pieces, maths helpers and the render loop clock.
+const {
+  WebGLRenderer,
+  Scene,
+  PerspectiveCamera,
+  Vector3,
+  Vector2,
+  Matrix4,
+  Quaternion,
+  Euler,
+  Color,
+  Box3,
+  Sphere,
+  Raycaster,
+  Clock,
+} = T;
+
+// Meshes, groups and the geometry / attribute types they are built from.
+const {
+  Mesh,
+  Group,
+  Object3D,
+  BufferGeometry,
+  BufferAttribute,
+  Float32BufferAttribute,
+  Uint16BufferAttribute,
+  Int32BufferAttribute,
+  BoxGeometry,
+  SphereGeometry,
+  PlaneGeometry,
+  CylinderGeometry,
+  ConeGeometry,
+  TorusGeometry,
+  CircleGeometry,
+  RingGeometry,
+} = T;
+
+// Materials, from flat colours through lit surfaces to custom shaders.
+const {
+  MeshBasicMaterial,
+  MeshLambertMaterial,
+  MeshPhongMaterial,
+  MeshStandardMaterial,
+  MeshPhysicalMaterial,
+  PointsMaterial,
+  LineBasicMaterial,
+  ShaderMaterial,
+  RawShaderMaterial,
+} = T;
+
+// Lights, loaders, audio, fog and animation pieces.
+const {
+  DirectionalLight,
+  PointLight,
+  SpotLight,
+  AmbientLight,
+  HemisphereLight,
+  TextureLoader,
+  ImageLoader,
+  AudioListener,
+  Audio,
+  AudioLoader,
+  Fog,
+  FogExp2,
+  AnimationMixer,
+  KeyframeTrack,
+  VectorKeyframeTrack,
+  QuaternionKeyframeTrack,
+} = T;
+
+// Textures, instancing and the remaining render constants.
+const {
+  CanvasTexture,
+  InstancedMesh,
+  DynamicDrawUsage,
+  BackSide,
+} = T;
+
+export {
+  WebGLRenderer,
+  Scene,
+  PerspectiveCamera,
+  Vector3,
+  Vector2,
+  Matrix4,
+  Quaternion,
+  Euler,
+  Color,
+  Box3,
+  Sphere,
+  Raycaster,
+  Clock,
+  Mesh,
+  Group,
+  Object3D,
+  BufferGeometry,
+  BufferAttribute,
+  Float32BufferAttribute,
+  Uint16BufferAttribute,
+  Int32BufferAttribute,
+  BoxGeometry,
+  SphereGeometry,
+  PlaneGeometry,
+  CylinderGeometry,
+  ConeGeometry,
+  TorusGeometry,
+  MeshBasicMaterial,
+  MeshLambertMaterial,
+  MeshPhongMaterial,
+  MeshStandardMaterial,
+  MeshPhysicalMaterial,
+  PointsMaterial,
+  LineBasicMaterial,
+  ShaderMaterial,
+  RawShaderMaterial,
+  DirectionalLight,
+  PointLight,
+  SpotLight,
+  AmbientLight,
+  HemisphereLight,
+  TextureLoader,
+  ImageLoader,
+  AudioListener,
+  Audio,
+  AudioLoader,
+  Fog,
+  FogExp2,
+  AnimationMixer,
+  KeyframeTrack,
+  VectorKeyframeTrack,
+  QuaternionKeyframeTrack,
+  CircleGeometry,
+  RingGeometry,
+  CanvasTexture,
+  InstancedMesh,
+  DynamicDrawUsage,
+  BackSide,
+};

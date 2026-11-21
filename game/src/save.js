@@ -1,4 +1,8 @@
-// Save and Load manager using localStorage
+// Save and load for Solmar Bay, persisted in localStorage under one key.
+// The saved shape is flat: the player's position, money, health, wanted
+// level, weapons, armour, respect, the in-game day and clock, the current
+// mission, and the garage — plus a timestamp so the menu can show when
+// the save was made.
 import { CONFIG } from './config.js';
 
 export class SaveManager {
@@ -23,6 +27,9 @@ export class SaveManager {
 
   save(playerData) {
     try {
+      // The world object carries its position as a Vector3, so read the
+      // coordinates from .position when it is there and fall back to flat
+      // x/y/z fields (and finally to the fresh-game defaults).
       const data = {
         x: playerData.position?.x ?? playerData.x ?? 0,
         y: playerData.position?.y ?? playerData.y ?? 1,

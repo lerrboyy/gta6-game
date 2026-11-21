@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-01/lerrboyy/gta6-game/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/lerrboyy/gta6-game/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-Solmar Bay is a 3D open-world crime game in the spirit of GTA 6: explore a sun-soaked coastal city on foot or by car, steal cars, dodge the police, and run missions to build your empire.
+Solmar Bay is a 3D open-world crime game in the spirit of GTA 6. Rico arrives in a sun-soaked coastal city with nothing to his name — explore it on foot or behind the wheel, steal cars, stay one step ahead of the police, and run jobs to build your empire.
 
 ## Features
 

@@ -1,8 +1,13 @@
-// A tiny static server for game/ (Node 22, standard library only), so an entry can be played
-// locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
-// It sends the MIME types a browser game needs, refuses any path outside game/, and otherwise
-// v3: serves the third-person open-world build with its HUD, garage and radio intact.
-// does nothing clever: this is a development convenience, not a web server for the internet.
+// A small local server for playing the game while it is being built.
+//
+// Running `node serve.ts` serves the game/ folder on
+// http://localhost:8080, so the game can be opened in a desktop browser
+// with no build step and no installed packages — Node 22's standard
+// library is all it uses. It only answers with files from inside game/,
+// sends the content types a browser game needs, and tells the browser not
+// to cache anything, so a fresh edit is what gets loaded. This is a
+// convenience for local play, not a server meant to face the internet.
+
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';

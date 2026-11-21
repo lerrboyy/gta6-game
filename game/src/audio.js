@@ -1,5 +1,20 @@
-// WebAudio Synthesizer for Solmar Bay sound effects & ambient audio
+// Solmar Bay sound engine — every sound is synthesized live with Web Audio,
+// so the game ships no audio files. UI blips, footsteps, the two-station
+// radio, one shot per weapon, the coastal ambient hum and the two-tone
+// police siren are all built here from oscillators and filtered noise.
 import { CONFIG } from './config.js';
+
+// The little bass riff the radio loops, one note per beat.
+const RADIO_RIFF = [110, 130.8, 164.8, 196, 164.8, 130.8, 110, 98];
+const RADIO_BEAT_MS = 250;
+const RADIO_NOTE_SECONDS = 0.22;
+const RADIO_NOTE_GAIN = 0.05;
+
+// Two-tone siren: low note, high note, and how long each one lasts.
+const SIREN_LOW_HZ = 700;
+const SIREN_HIGH_HZ = 950;
+const SIREN_STEP_MS = 400;
+const SIREN_GAIN = 0.04;
 
 export class AudioManager {
   constructor() {
@@ -7,8 +22,8 @@ export class AudioManager {
     this.ctx = null;
     this.ambientNode = null;
     this.initialized = false;
-    // Which radio station is tuned in, the timer that schedules its notes,
-    // and the nodes of the police siren loop (null while the siren is off).
+    // Which station the dial sits on, the timer that schedules its notes,
+    // and the live nodes of the siren loop (null while the siren is quiet).
     this.radioStation = 0;
     this.radioTimer = null;
     this.sirenNodes = null;
@@ -18,12 +33,11 @@ export class AudioManager {
     if (this.initialized) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
-        this.initialized = true;
-        this.startAmbient();
-        this.startRadio();
-      }
+      if (!AudioCtx) return;
+      this.ctx = new AudioCtx();
+      this.initialized = true;
+      this.startAmbient();
+      this.startRadio();
     } catch (e) {
       console.warn('WebAudio not supported:', e);
     }
@@ -41,70 +55,70 @@ export class AudioManager {
     return this.muted;
   }
 
+  // One short pitched blip: an oscillator that slides from one frequency
+  // to another while its gain falls away to silence.
+  _blip(wave, fromHz, toHz, seconds, volume) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = wave;
+    osc.frequency.setValueAtTime(fromHz, now);
+    osc.frequency.exponentialRampToValueAtTime(toHz, now + seconds);
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + seconds);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(now + seconds);
+  }
+
+  // A burst of white noise that fades out over the given time.
+  _noiseBurst(seconds, volume) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const length = Math.floor(this.ctx.sampleRate * seconds);
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    }
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + seconds);
+    source.connect(gain);
+    gain.connect(this.ctx.destination);
+    source.start();
+  }
+
   playClick() {
     if (this.muted) return;
     this.init();
     if (!this.ctx) return;
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(600, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.08);
-
-    gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08);
-
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.08);
+    this._blip('sine', 600, 800, 0.08, 0.15);
   }
 
   playJump() {
     if (this.muted) return;
     this.init();
     if (!this.ctx) return;
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(350, this.ctx.currentTime + 0.2);
-
-    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.2);
-
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.2);
+    this._blip('triangle', 150, 350, 0.2, 0.2);
   }
 
   playFootstep() {
     if (this.muted) return;
     this.init();
     if (!this.ctx) return;
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(80, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.05);
-
-    gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
-
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.05);
+    this._blip('square', 80, 30, 0.05, 0.08);
   }
 
   startAmbient() {
     if (!this.ctx) return;
     try {
-      // Gentle coastal ocean / city hum wind noise using pink/white noise + filter
+      // Looping white noise through a low-pass filter reads as a soft
+      // coastal hum — ocean and distant city traffic rolled into one.
       const bufferSize = this.ctx.sampleRate * 2;
       const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const output = noiseBuffer.getChannelData(0);
@@ -112,9 +126,9 @@ export class AudioManager {
         output[i] = Math.random() * 2 - 1;
       }
 
-      const whiteNoise = this.ctx.createBufferSource();
-      whiteNoise.buffer = noiseBuffer;
-      whiteNoise.loop = true;
+      const source = this.ctx.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
@@ -123,11 +137,11 @@ export class AudioManager {
       const gain = this.ctx.createGain();
       gain.gain.setValueAtTime(0.02, this.ctx.currentTime);
 
-      whiteNoise.connect(filter);
+      source.connect(filter);
       filter.connect(gain);
       gain.connect(this.ctx.destination);
-      whiteNoise.start();
-      this.ambientNode = whiteNoise;
+      source.start();
+      this.ambientNode = source;
     } catch (e) {
       console.warn('Ambient audio error:', e);
     }
@@ -144,8 +158,6 @@ export class AudioManager {
   startRadio() {
     this.stopRadio();
     if (!this.ctx) return;
-    const bassline = [110, 130.8, 164.8, 196, 164.8, 130.8, 110, 98];
-    const station = CONFIG.RADIO[this.radioStation];
     const wave = this.radioStation === 0 ? 'square' : 'triangle';
     const octave = this.radioStation === 0 ? 1 : 2;
     let step = 0;
@@ -155,18 +167,21 @@ export class AudioManager {
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.type = wave;
-        osc.frequency.setValueAtTime(bassline[step % bassline.length] * octave, this.ctx.currentTime);
-        gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.22);
+        osc.frequency.setValueAtTime(
+          RADIO_RIFF[step % RADIO_RIFF.length] * octave,
+          this.ctx.currentTime
+        );
+        gain.gain.setValueAtTime(RADIO_NOTE_GAIN, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + RADIO_NOTE_SECONDS);
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start();
-        osc.stop(this.ctx.currentTime + 0.22);
+        osc.stop(this.ctx.currentTime + RADIO_NOTE_SECONDS);
         step++;
       } catch (e) {
         // A missed radio note is not worth crashing the game over.
       }
-    }, 250);
+    }, RADIO_BEAT_MS);
   }
 
   stopRadio() {
@@ -189,69 +204,17 @@ export class AudioManager {
     this.init();
     if (!this.ctx) return;
     try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      const now = this.ctx.currentTime;
       if (kind === 'FISTS') {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(90, now);
-        gain.gain.setValueAtTime(0.12, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(now + 0.06);
+        this._blip('sine', 90, 90, 0.06, 0.12);
       } else if (kind === '.38') {
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(900, now);
-        osc.frequency.exponentialRampToValueAtTime(200, now + 0.08);
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(now + 0.08);
+        this._blip('square', 900, 200, 0.08, 0.25);
       } else if (kind === 'SMG') {
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(1200, now);
-        gain.gain.setValueAtTime(0.15, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(now + 0.04);
+        this._blip('square', 1200, 1200, 0.04, 0.15);
       } else if (kind === '12G') {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(120, now);
-        osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
-        gain.gain.setValueAtTime(0.35, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(now + 0.25);
-        const noiseLen = Math.floor(this.ctx.sampleRate * 0.1);
-        const noiseBuf = this.ctx.createBuffer(1, noiseLen, this.ctx.sampleRate);
-        const data = noiseBuf.getChannelData(0);
-        for (let i = 0; i < noiseLen; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / noiseLen);
-        const noise = this.ctx.createBufferSource();
-        noise.buffer = noiseBuf;
-        const noiseGain = this.ctx.createGain();
-        noiseGain.gain.setValueAtTime(0.2, now);
-        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-        noise.connect(noiseGain);
-        noiseGain.connect(this.ctx.destination);
-        noise.start();
+        this._blip('sine', 120, 40, 0.25, 0.35);
+        this._noiseBurst(0.1, 0.2);
       } else if (kind === 'AR-9') {
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(700, now);
-        osc.frequency.exponentialRampToValueAtTime(150, now + 0.12);
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(now + 0.12);
+        this._blip('sawtooth', 700, 150, 0.12, 0.25);
       }
     } catch (e) {
       console.warn('Weapon sound error:', e);
@@ -265,8 +228,8 @@ export class AudioManager {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(700, this.ctx.currentTime);
-      gain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+      osc.frequency.setValueAtTime(SIREN_LOW_HZ, this.ctx.currentTime);
+      gain.gain.setValueAtTime(SIREN_GAIN, this.ctx.currentTime);
       osc.connect(gain);
       gain.connect(this.ctx.destination);
       osc.start();
@@ -274,8 +237,8 @@ export class AudioManager {
       const timer = setInterval(() => {
         if (!this.ctx) return;
         high = !high;
-        osc.frequency.setValueAtTime(high ? 950 : 700, this.ctx.currentTime);
-      }, 400);
+        osc.frequency.setValueAtTime(high ? SIREN_HIGH_HZ : SIREN_LOW_HZ, this.ctx.currentTime);
+      }, SIREN_STEP_MS);
       this.sirenNodes = { osc, gain, timer };
     } catch (e) {
       console.warn('Siren error:', e);

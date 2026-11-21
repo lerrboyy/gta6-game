@@ -1,3 +1,9 @@
+// Solmar Bay — entry point.
+//
+// This module is the glue: it boots the renderer, builds the city and the
+// world, creates every manager, grabs every HUD element by id, wires the
+// menus and the keyboard, and drives the per-frame loop. It owns no game
+// rules itself — those live in world.js, missions.js, police.js and friends.
 import * as THREE from './three.js';
 import { CONFIG } from './config.js';
 import { SeededRandom } from './random.js';
@@ -9,10 +15,14 @@ import { SaveManager } from './save.js';
 import { stageShot } from './shots.js';
 import { MissionManager } from './missions.js';
 
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : 42;
+// ------------------------------------------------------------------ boot
+
+// Optional URL knobs: ?shot=play|start|... stages a screenshot, ?seed=N
+// picks the city layout (42 when absent or unparsable).
+const query = new URLSearchParams(window.location.search);
+const shotName = query.get('shot');
+const parsedSeed = Number.parseInt(query.get('seed') ?? '', 10);
+const citySeed = Number.isInteger(parsedSeed) ? parsedSeed : 42;
 
 const canvas = document.getElementById('game-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -21,9 +31,11 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(
+  60, window.innerWidth / window.innerHeight, 0.1, 1000
+);
 
-const city = new CityGenerator(scene, seed);
+const city = new CityGenerator(scene, citySeed);
 city.build();
 
 const world = new WorldManager(scene, city);
@@ -31,78 +43,104 @@ const audio = new AudioManager();
 const saveManager = new SaveManager();
 const missions = new MissionManager(scene, world, saveManager);
 
-// HUD and UI elements
-const hudEl = document.getElementById('hud');
-const startScreenEl = document.getElementById('start-screen');
-const pauseScreenEl = document.getElementById('pause-screen');
-const startBtn = document.getElementById('start-btn');
-const continueBtn = document.getElementById('continue-btn');
-const resumeBtn = document.getElementById('resume-btn');
-const saveBtn = document.getElementById('save-btn');
-const healthFill = document.getElementById('health-fill');
-const cashDisplay = document.getElementById('cash-display');
-const speedDisplay = document.getElementById('speed-display');
-const wantedStars = document.getElementById('wanted-stars');
-const weaponSlotsEl = document.getElementById('weapon-slots');
-const radioDisplay = document.getElementById('radio-display');
-const clockDisplay = document.getElementById('clock-display');
-const respectFill = document.getElementById('respect-fill');
-const respectLabel = document.getElementById('respect-label');
-const armorFill = document.getElementById('armor-fill');
-const dispatchPanel = document.getElementById('dispatch-panel');
-const garageMenuEl = document.getElementById('garage-menu');
-const gRepair = document.getElementById('g-repair');
-const gRespray = document.getElementById('g-respray');
-const gEngine = document.getElementById('g-engine');
-const gArmour = document.getElementById('g-armour');
-const gNitro = document.getElementById('g-nitro');
-const gClose = document.getElementById('g-close');
+// ------------------------------------------------------------- HUD lookup
 
-let gameState = 'start'; // 'start', 'playing', 'paused'
-let garageOpen = false; // true while the SOLMAR CUSTOMS menu is on screen
+function grab(id) {
+  return document.getElementById(id);
+}
 
-// Highlight the equipped weapon slot and grey out the ones Rico has not bought.
-function updateWeaponSlots() {
-  for (let i = 0; i < CONFIG.WEAPONS.length; i++) {
-    const slotEl = document.getElementById('wslot-' + i);
+const hud = grab('hud');
+const startScreen = grab('start-screen');
+const pauseScreen = grab('pause-screen');
+const startButton = grab('start-btn');
+const continueButton = grab('continue-btn');
+const resumeButton = grab('resume-btn');
+const saveButton = grab('save-btn');
+const healthBar = grab('health-fill');
+const cashLabel = grab('cash-display');
+const speedLabel = grab('speed-display');
+const wantedStars = grab('wanted-stars');
+const weaponSlots = grab('weapon-slots');
+const radioLabel = grab('radio-display');
+const clockLabel = grab('clock-display');
+const respectBar = grab('respect-fill');
+const respectName = grab('respect-label');
+const armorBar = grab('armor-fill');
+const dispatchPanel = grab('dispatch-panel');
+const garageMenu = grab('garage-menu');
+const garageRepair = grab('g-repair');
+const garageRespray = grab('g-respray');
+const garageEngine = grab('g-engine');
+const garageArmour = grab('g-armour');
+const garageNitro = grab('g-nitro');
+const garageClose = grab('g-close');
+
+let phase = 'start'; // 'start' | 'playing' | 'paused'
+let garageVisible = false;
+
+// ------------------------------------------------------- weapon slot strip
+
+// Mark the drawn weapon, dim the ones Rico has not bought yet, and label
+// every slot with its number key and weapon name.
+function refreshWeaponSlots() {
+  for (let slot = 0; slot < CONFIG.WEAPONS.length; slot++) {
+    const slotEl = document.getElementById('wslot-' + slot);
     if (!slotEl) continue;
-    slotEl.classList.toggle('active', i === world.weaponSlot);
-    slotEl.classList.toggle('locked', !world.ownedWeapons.includes(i));
-    slotEl.textContent = (i + 1) + ' ' + CONFIG.WEAPONS[i].name;
+    slotEl.classList.toggle('active', slot === world.weaponSlot);
+    slotEl.classList.toggle('locked', !world.ownedWeapons.includes(slot));
+    slotEl.textContent = (slot + 1) + ' ' + CONFIG.WEAPONS[slot].name;
   }
 }
 
-// A small top-down sketch of the city: beach, road grid, garage, cops, and Rico.
-function drawMinimap() {
+// ---------------------------------------------------------------- minimap
+
+// A tiny overhead sketch: sand strip on the west edge, the road grid, the
+// garage in teal, red dots for every pursuing cruiser, and a white arrow
+// for Rico that turns with him. It is wrapped so a canvas failure can
+// never bring the game down.
+function paintMinimap() {
   try {
-    const minimap = document.getElementById('minimap');
-    if (!minimap) return;
-    const ctx = minimap.getContext('2d');
+    const map = document.getElementById('minimap');
+    if (!map) return;
+    const ctx = map.getContext('2d');
     if (!ctx) return;
-    const S = 150;
+    const size = 150;
+    const centre = 75;
+    const scale = centre / 300;
+
     ctx.fillStyle = '#0a0a14';
-    ctx.fillRect(0, 0, S, S);
+    ctx.fillRect(0, 0, size, size);
     ctx.fillStyle = '#d9c27a';
-    ctx.fillRect(0, 0, 18, S);
+    ctx.fillRect(0, 0, 18, size);
+
     ctx.strokeStyle = '#5a5a6a';
     ctx.lineWidth = 1;
-    for (let i = 0; i <= S; i += 15) {
-      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, S); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(S, i); ctx.stroke();
+    for (let line = 0; line <= size; line += 15) {
+      ctx.beginPath();
+      ctx.moveTo(line, 0);
+      ctx.lineTo(line, size);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, line);
+      ctx.lineTo(size, line);
+      ctx.stroke();
     }
+
     ctx.fillStyle = '#0e7c7b';
     ctx.fillRect(108, 108, 8, 8);
+
     ctx.fillStyle = '#ff4444';
-    for (const car of world.police.policeCars) {
-      const px = 75 + (car.position.x / 300) * 75;
-      const pz = 75 + (car.position.z / 300) * 75;
+    for (const cruiser of world.police.policeCars) {
+      const px = centre + cruiser.position.x * scale;
+      const pz = centre + cruiser.position.z * scale;
       ctx.beginPath();
       ctx.arc(px, pz, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+
     ctx.fillStyle = '#ffffff';
     ctx.save();
-    ctx.translate(75, 75);
+    ctx.translate(centre, centre);
     ctx.rotate(world.rotation);
     ctx.beginPath();
     ctx.moveTo(0, -6);
@@ -111,55 +149,70 @@ function drawMinimap() {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-  } catch (e) {
+  } catch (err) {
     // The minimap must never take the game down with it.
   }
 }
 
-// The police dispatch list: who is chasing Rico, how far away, and what they plan.
-function updateDispatch() {
+// ------------------------------------------------------------ dispatch box
+
+// While Rico is hot, list every unit on him: call sign, distance and
+// tactic. Cold, the panel stays hidden.
+function refreshDispatch() {
   if (!dispatchPanel) return;
   if (world.wanted > 0) {
     dispatchPanel.classList.remove('hidden');
-    const title = world.police.getWantedName(world) + ' — ' + world.wanted + ' STARS';
-    const lines = world.police.getDispatch(world).map((u) => u.name + ' — ' + u.dist + ' — ' + u.tactic);
-    dispatchPanel.innerHTML = title + '<br>' + lines.join('<br>');
+    const heading = world.police.getWantedName(world) + ' — ' + world.wanted + ' STARS';
+    const rows = world.police
+      .getDispatch(world)
+      .map((unit) => unit.name + ' — ' + unit.dist + ' — ' + unit.tactic);
+    dispatchPanel.innerHTML = heading + '<br>' + rows.join('<br>');
   } else {
     dispatchPanel.classList.add('hidden');
   }
 }
 
-function openGarage() {
-  if (!garageMenuEl) return;
-  garageMenuEl.classList.remove('hidden');
-  garageOpen = true;
+// ----------------------------------------------------------------- garage
+
+function showGarage() {
+  if (!garageMenu) return;
+  garageMenu.classList.remove('hidden');
+  garageVisible = true;
 }
 
-function closeGarage() {
-  if (!garageMenuEl) return;
-  garageMenuEl.classList.add('hidden');
-  garageOpen = false;
+function hideGarage() {
+  if (!garageMenu) return;
+  garageMenu.classList.add('hidden');
+  garageVisible = false;
 }
 
-// Garage upgrade buttons: charge the upgrade, click, and flash DONE! on success.
-function wireGarageButton(btn, kind) {
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    const ok = world.vehicles.applyGarageUpgrade(kind, world);
+// One garage button: attempt the upgrade, click, and flash DONE! briefly
+// when the purchase lands.
+function bindGarageButton(button, upgrade) {
+  if (!button) return;
+  button.addEventListener('click', () => {
+    const bought = world.vehicles.applyGarageUpgrade(upgrade, world);
     audio.playClick();
-    if (ok) {
-      const label = btn.textContent;
-      btn.textContent = 'DONE!';
-      setTimeout(() => { btn.textContent = label; }, 800);
+    if (bought) {
+      const original = button.textContent;
+      button.textContent = 'DONE!';
+      setTimeout(() => { button.textContent = original; }, 800);
     }
   });
 }
-wireGarageButton(gRepair, 'repair');
-wireGarageButton(gRespray, 'respray');
-wireGarageButton(gEngine, 'engine');
-wireGarageButton(gArmour, 'armour');
-wireGarageButton(gNitro, 'nitro');
-if (gClose) gClose.addEventListener('click', () => { audio.playClick(); closeGarage(); });
+bindGarageButton(garageRepair, 'repair');
+bindGarageButton(garageRespray, 'respray');
+bindGarageButton(garageEngine, 'engine');
+bindGarageButton(garageArmour, 'armour');
+bindGarageButton(garageNitro, 'nitro');
+if (garageClose) {
+  garageClose.addEventListener('click', () => {
+    audio.playClick();
+    hideGarage();
+  });
+}
+
+// ------------------------------------------------------------------ input
 
 const input = new InputManager(
   canvas,
@@ -168,42 +221,39 @@ const input = new InputManager(
     console.log('Mute toggled:', muted);
   },
   () => { // Pause toggle
-    if (gameState === 'playing') {
-      pauseGame();
-    } else if (gameState === 'paused') {
-      resumeGame();
-    }
+    if (phase === 'playing') pauseGame();
+    else if (phase === 'paused') resumeGame();
   },
-  () => { // Interact (E key)
-    if (gameState === 'playing') {
-      world.toggleCarEnterExit();
-    }
+  () => { // Interact (E key): climb in or out of a car
+    if (phase === 'playing') world.toggleCarEnterExit();
   }
 );
 
 if (saveManager.hasSave()) {
-  continueBtn.classList.remove('hidden');
+  continueButton.classList.remove('hidden');
 }
 
-function startGame(savedData = null) {
+// ------------------------------------------------------------ game phases
+
+function beginGame(saved = null) {
   audio.init();
   audio.playClick();
-  startScreenEl.classList.add('hidden');
-  pauseScreenEl.classList.add('hidden');
-  hudEl.classList.remove('hidden');
+  startScreen.classList.add('hidden');
+  pauseScreen.classList.add('hidden');
+  hud.classList.remove('hidden');
   canvas.requestPointerLock?.();
 
-  if (savedData) {
-    world.setPosition(savedData.x, savedData.y, savedData.z);
-    world.cash = savedData.cash;
-    world.health = savedData.health;
-    world.wanted = savedData.wanted;
-    world.armor = savedData.armor ?? 0;
-    world.respect = savedData.respect ?? 0;
-    world.day = savedData.day ?? 1;
-    world.clockMinutes = savedData.clockMinutes ?? 571;
-    world.weaponSlot = savedData.weaponSlot ?? 1;
-    world.ownedWeapons = savedData.ownedWeapons ?? [0, 1];
+  if (saved) {
+    world.setPosition(saved.x, saved.y, saved.z);
+    world.cash = saved.cash;
+    world.health = saved.health;
+    world.wanted = saved.wanted;
+    world.armor = saved.armor ?? 0;
+    world.respect = saved.respect ?? 0;
+    world.day = saved.day ?? 1;
+    world.clockMinutes = saved.clockMinutes ?? 571;
+    world.weaponSlot = saved.weaponSlot ?? 1;
+    world.ownedWeapons = saved.ownedWeapons ?? [0, 1];
   } else {
     world.setPosition(0, 0, 10);
     world.cash = 500;
@@ -216,37 +266,36 @@ function startGame(savedData = null) {
     world.weaponSlot = 1;
     world.ownedWeapons = [0, 1];
   }
-  gameState = 'playing';
+  phase = 'playing';
 }
 
 function pauseGame() {
-  gameState = 'paused';
-  pauseScreenEl.classList.remove('hidden');
-  hudEl.classList.add('hidden');
+  phase = 'paused';
+  pauseScreen.classList.remove('hidden');
+  hud.classList.add('hidden');
   document.exitPointerLock?.();
 }
 
 function resumeGame() {
   audio.playClick();
-  pauseScreenEl.classList.remove('hidden');
-  hudEl.classList.add('hidden');
+  pauseScreen.classList.add('hidden');
+  hud.classList.remove('hidden');
   canvas.requestPointerLock?.();
-  gameState = 'playing';
+  phase = 'playing';
 }
 
-startBtn.addEventListener('click', () => startGame());
-continueBtn.addEventListener('click', () => {
+startButton.addEventListener('click', () => beginGame());
+continueButton.addEventListener('click', () => {
   const data = saveManager.load();
-  if (data) startGame(data);
-  else startGame();
+  if (data) beginGame(data);
+  else beginGame();
 });
-
-resumeBtn.addEventListener('click', () => resumeGame());
-saveBtn.addEventListener('click', () => {
+resumeButton.addEventListener('click', () => resumeGame());
+saveButton.addEventListener('click', () => {
   audio.playClick();
   saveManager.save(world);
-  saveBtn.textContent = 'GAME SAVED!';
-  setTimeout(() => { saveBtn.textContent = 'SAVE GAME'; }, 1500);
+  saveButton.textContent = 'GAME SAVED!';
+  setTimeout(() => { saveButton.textContent = 'SAVE GAME'; }, 1500);
 });
 
 window.addEventListener('resize', () => {
@@ -255,48 +304,54 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// If screenshot shot parameter is provided, stage the shot
-   if (shot) {
-     if (shot !== 'start') {
-       startScreenEl.classList.add('hidden');
-       hudEl.classList.remove('hidden');
-     }
-     world.setPosition(0, 0, 10);
-     if (shot === 'play') { world.cash = 18450; world.wanted = 3; }
-     else { world.cash = 500; world.wanted = 0; }
-     world.health = 100;
-     gameState = 'playing';
-    if (cashDisplay) cashDisplay.textContent = `$${world.cash}`;
-    if (healthFill) healthFill.style.width = `${world.health}%`;
-    if (wantedStars) wantedStars.textContent = '';
-    if (shot === 'play' && wantedStars) {
-      let stars = '';
-      for (let i = 0; i < world.wanted; i++) stars += '★';
-      wantedStars.textContent = stars;
-    }
-    if (shot === 'play' && document.getElementById('speed-display')) {
-      const sp = document.getElementById('speed-display');
-      sp.classList.remove('hidden');
-      sp.textContent = '61 MPH';
-    }
-    if (shot === 'play' && document.getElementById('radio-display')) {
-      document.getElementById('radio-display').textContent = 'SOLMAR FM 98.6 — Golden Hour';
-    }
-    world.armor = 40;
-    world.respect = 800;
-    world.day = 1;
-    world.clockMinutes = 17 * 60 + 24;
-    world.weaponSlot = 2;
-    world.ownedWeapons = [0, 1, 2];
-    updateWeaponSlots();
-    updateDispatch();
-     stageShot(shot, scene, camera, world, renderer);
-     // The chase staging adds the police cars and heli, so refresh the
-     // dispatch list and the minimap now that they exist.
-     updateDispatch();
-     drawMinimap();
-   } else {
-  // Main animation loop
+// ------------------------------------------------------------- shot / loop
+
+if (shotName) {
+  // Screenshot staging: no loop, just pose the scene and hand it to shots.js.
+  if (shotName !== 'start') {
+    startScreen.classList.add('hidden');
+    hud.classList.remove('hidden');
+  }
+  world.setPosition(0, 0, 10);
+  if (shotName === 'play') {
+    world.cash = 18450;
+    world.wanted = 3;
+  } else {
+    world.cash = 500;
+    world.wanted = 0;
+  }
+  world.health = 100;
+  phase = 'playing';
+  if (cashLabel) cashLabel.textContent = `$${world.cash}`;
+  if (healthBar) healthBar.style.width = `${world.health}%`;
+  if (wantedStars) {
+    let stars = '';
+    for (let i = 0; i < world.wanted; i++) stars += '★';
+    wantedStars.textContent = stars;
+  }
+  if (shotName === 'play' && speedLabel) {
+    speedLabel.classList.remove('hidden');
+    speedLabel.textContent = '61 MPH';
+  }
+  if (shotName === 'play' && radioLabel) {
+    radioLabel.textContent = 'SOLMAR FM 98.6 — Golden Hour';
+  }
+  world.armor = 40;
+  world.respect = 800;
+  world.day = 1;
+  world.clockMinutes = 17 * 60 + 24;
+  world.weaponSlot = 2;
+  world.ownedWeapons = [0, 1, 2];
+  refreshWeaponSlots();
+  refreshDispatch();
+  stageShot(shotName, scene, camera, world, renderer);
+  // The chase staging adds police cars and the heli, so refresh the
+  // dispatch list and the minimap now that they exist.
+  refreshDispatch();
+  paintMinimap();
+} else {
+  // The live game: one frame at a time, delta clamped so a hitch never
+  // teleports anything.
   let lastTime = performance.now();
 
   function animate(now) {
@@ -304,26 +359,30 @@ window.addEventListener('resize', () => {
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
 
-    if (gameState === 'playing') {
+    if (phase === 'playing') {
       world.update(dt, input, audio);
       missions.update(dt, world, input);
       world.updateCamera(camera);
 
-      // Update HUD
-      if (healthFill) healthFill.style.width = `${Math.max(0, Math.min(100, world.health))}%`;
-      if (cashDisplay) cashDisplay.textContent = `$${world.cash}`;
+      // Health, cash and wanted stars.
+      if (healthBar) {
+        healthBar.style.width = `${Math.max(0, Math.min(100, world.health))}%`;
+      }
+      if (cashLabel) cashLabel.textContent = `$${world.cash}`;
       if (wantedStars) {
         let stars = '';
         for (let i = 0; i < world.wanted; i++) stars += '★';
         wantedStars.textContent = stars;
       }
-      if (speedDisplay) {
+
+      // Speedometer, visible only behind the wheel.
+      if (speedLabel) {
         if (world.isDriving && world.vehicles.drivenCar) {
-          speedDisplay.classList.remove('hidden');
+          speedLabel.classList.remove('hidden');
           const mph = Math.round(Math.abs(world.vehicles.drivenCar.speed) * 3);
-          speedDisplay.textContent = `${mph} MPH`;
+          speedLabel.textContent = `${mph} MPH`;
         } else {
-          speedDisplay.classList.add('hidden');
+          speedLabel.classList.add('hidden');
         }
       }
 
@@ -331,29 +390,31 @@ window.addEventListener('resize', () => {
       for (let slot = 0; slot < 5; slot++) {
         if (input.consumeKey('Digit' + (slot + 1))) world.switchWeapon(slot);
       }
-      updateWeaponSlots();
+      refreshWeaponSlots();
       if (input.consumeKey('KeyR')) {
-        const name = audio.cycleRadio();
-        if (radioDisplay) radioDisplay.textContent = name;
+        const station = audio.cycleRadio();
+        if (radioLabel) radioLabel.textContent = station;
       }
       if (input.consumeKey('KeyG')) {
-        if (garageOpen) closeGarage();
-        else if (world.vehicles.isAtGarage()) openGarage();
+        if (garageVisible) hideGarage();
+        else if (world.vehicles.isAtGarage()) showGarage();
       }
 
       // Clock, respect meter, armor bar and the radio station name.
-      if (clockDisplay) clockDisplay.textContent = world.clockText();
-      if (respectFill) respectFill.style.width = Math.min(100, world.respect / 15) + '%';
-      if (respectLabel) respectLabel.textContent = world.addRespect(0);
-      if (armorFill) armorFill.style.width = Math.min(100, world.armor) + '%';
-      if (radioDisplay && !radioDisplay.textContent) radioDisplay.textContent = audio.currentStationName();
+      if (clockLabel) clockLabel.textContent = world.clockText();
+      if (respectBar) respectBar.style.width = Math.min(100, world.respect / 15) + '%';
+      if (respectName) respectName.textContent = world.addRespect(0);
+      if (armorBar) armorBar.style.width = Math.min(100, world.armor) + '%';
+      if (radioLabel && !radioLabel.textContent) {
+        radioLabel.textContent = audio.currentStationName();
+      }
 
       // The siren wails while the heat is on and cuts out when it is not.
       if (world.wanted > 0) audio.startSiren();
       else audio.stopSiren();
 
-      updateDispatch();
-      drawMinimap();
+      refreshDispatch();
+      paintMinimap();
     }
 
     renderer.render(scene, camera);
